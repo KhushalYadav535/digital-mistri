@@ -9,16 +9,79 @@ const router = express.Router();
 
 // Admin Login
 router.post('/login', async (req, res) => {
+  console.log('=== Admin Login Request ===');
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
+  
   const { email, password } = req.body;
+  
+  // Input validation
+  if (!email || !password) {
+    console.log('Missing email or password');
+    return res.status(400).json({ 
+      message: 'Email and password are required',
+      received: { email: !!email, password: !!password }
+    });
+  }
+  
   try {
+    console.log('Looking up admin:', email);
     const admin = await Admin.findOne({ email });
-    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    
+    if (!admin) {
+      console.log('Admin not found:', email);
+      return res.status(404).json({ 
+        message: 'Admin not found',
+        email: email
+      });
+    }
+    
+    console.log('Admin found, comparing password...');
     const isMatch = await bcrypt.compare(password, admin.password);
-    if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
-    const token = jwt.sign({ id: admin._id, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, admin: { id: admin._id, name: admin.name, email: admin.email, role: admin.role } });
+    
+    if (!isMatch) {
+      console.log('Invalid password for admin:', email);
+      return res.status(400).json({ 
+        message: 'Invalid credentials',
+        email: email
+      });
+    }
+    
+    console.log('Password matched, generating token...');
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET is not set!');
+      return res.status(500).json({ 
+        message: 'Server configuration error',
+        error: 'JWT_SECRET is not set'
+      });
+    }
+    
+    const token = jwt.sign(
+      { id: admin._id, role: 'admin' }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '7d' }
+    );
+    
+    console.log('Login successful for admin:', email);
+    const response = {
+      token,
+      admin: {
+        id: admin._id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role
+      }
+    };
+    
+    console.log('Sending response:', response);
+    res.json(response);
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Admin login error:', err);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 });
 

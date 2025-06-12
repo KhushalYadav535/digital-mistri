@@ -33,6 +33,21 @@ mongoose.connect(MONGODB_URI, {
   .then(() => console.log('MongoDB connected'))
   .catch((err) => console.error('MongoDB connection error:', err));
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// Test endpoint - moved to top for easier access
+app.get('/api/test', (req, res) => {
+  console.log('Test endpoint hit');
+  res.json({ message: 'Backend is working!' });
+});
+
 // --- ROUTES ---
 // Admin routes
 app.use('/api/admin', adminRoutes);
