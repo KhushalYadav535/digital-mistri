@@ -5,10 +5,11 @@ import Admin from './models/Admin.js';
 
 dotenv.config();
 
-const MONGODB_URI = process.env.MONGODB_URI;
+// Use the same MongoDB URI that's working in the main server
+const MONGODB_URI = 'mongodb+srv://****:****@cluster0.imugfvo.mongodb.net/digital-mistri';
 
 if (!MONGODB_URI) {
-  console.error('MONGODB_URI is not set in environment variables');
+  console.error('MONGODB_URI is not set');
   process.exit(1);
 }
 
