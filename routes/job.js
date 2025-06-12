@@ -146,4 +146,21 @@ router.get('/all', adminAuth, async (req, res) => {
   }
 });
 
+// GET /api/jobs/:id - Get job details by ID (for worker, admin, or customer)
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id || id === 'undefined') {
+    return res.status(400).json({ message: 'Job ID is required' });
+  }
+  try {
+    const job = await Job.findById(id)
+      .populate('customer assignedWorker candidateWorkers rejectedBy');
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch job details', error: err.message });
+  }
+});
+
 export default router;
+
