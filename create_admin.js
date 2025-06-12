@@ -6,7 +6,7 @@ import Admin from './models/Admin.js';
 dotenv.config();
 
 // Use the same MongoDB URI that's working in the main server
-const MONGODB_URI = 'mongodb+srv://****:****@cluster0.imugfvo.mongodb.net/digital-mistri';
+const MONGODB_URI = 'mongodb+srv://digitalmistri33:ssPa8dtYoNNQBi8Z@cluster0.imugfvo.mongodb.net/digital-mistri';
 
 if (!MONGODB_URI) {
   console.error('MONGODB_URI is not set');
@@ -42,34 +42,28 @@ async function createAdmin() {
         const hashed = await bcrypt.hash(password, 10);
         exists.password = hashed;
         await exists.save();
-        console.log('Admin password updated successfully');
+        console.log('Admin password updated successfully.');
       } else {
-        console.log('Admin password is correct');
+        console.log('Admin password is already up to date.');
       }
-    } else {
-      console.log('Creating new admin...');
-      const hashed = await bcrypt.hash(password, 10);
-      const admin = new Admin({ 
-        name, 
-        email, 
-        password: hashed,
-        role: 'admin'
-      });
-      await admin.save();
-      console.log('Admin created successfully:', email);
+      console.log('createAdmin script finished.');
+      await mongoose.disconnect();
+      console.log('MongoDB disconnected');
     }
 
-    // Verify the admin was created/updated
-    const verifyAdmin = await Admin.findOne({ email });
-    console.log('Verification - Admin exists:', !!verifyAdmin);
-    if (verifyAdmin) {
-      console.log('Admin details:', {
-        id: verifyAdmin._id,
-        name: verifyAdmin.name,
-        email: verifyAdmin.email,
-        role: verifyAdmin.role
-      });
-    }
+    // If not exists, create admin
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const admin = new Admin({ 
+      name, 
+      email, 
+      password: hashedPassword,
+      role: 'admin'
+    });
+    await admin.save();
+    console.log('Admin created successfully with email:', email);
+    console.log('createAdmin script finished.');
+    await mongoose.disconnect();
+    console.log('MongoDB disconnected');
 
   } catch (error) {
     console.error('Error:', error);
@@ -81,8 +75,13 @@ async function createAdmin() {
   } finally {
     await mongoose.disconnect();
     console.log('MongoDB disconnected');
-    process.exit(0);
   }
 }
 
-createAdmin();
+createAdmin().then(() => {
+  console.log('createAdmin script finished.');
+  process.exit(0);
+}).catch((err) => {
+  console.error('Error running createAdmin:', err);
+  process.exit(1);
+});
