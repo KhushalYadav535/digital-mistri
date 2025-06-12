@@ -7,11 +7,23 @@ dotenv.config();
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
+if (!MONGODB_URI) {
+  console.error('MONGODB_URI is not set in environment variables');
+  process.exit(1);
+}
+
 async function createAdmin() {
   try {
     console.log('Connecting to MongoDB...');
-    await mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+    console.log('MongoDB URI:', MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//****:****@'));
+    
+    await mongoose.connect(MONGODB_URI, { 
+      useNewUrlParser: true, 
+      useUnifiedTopology: true 
+    });
+    
     console.log('Connected to MongoDB');
+    console.log('MongoDB Connection State:', mongoose.connection.readyState);
 
     const email = 'digitalmistri33@gmail.com';
     const password = 'Anubhav@2025';
@@ -19,6 +31,7 @@ async function createAdmin() {
 
     console.log('Checking if admin exists...');
     const exists = await Admin.findOne({ email });
+    
     if (exists) {
       console.log('Admin already exists with email:', email);
       // Update password if needed
@@ -35,14 +48,38 @@ async function createAdmin() {
     } else {
       console.log('Creating new admin...');
       const hashed = await bcrypt.hash(password, 10);
-      const admin = new Admin({ name, email, password: hashed });
+      const admin = new Admin({ 
+        name, 
+        email, 
+        password: hashed,
+        role: 'admin'
+      });
       await admin.save();
       console.log('Admin created successfully:', email);
     }
+
+    // Verify the admin was created/updated
+    const verifyAdmin = await Admin.findOne({ email });
+    console.log('Verification - Admin exists:', !!verifyAdmin);
+    if (verifyAdmin) {
+      console.log('Admin details:', {
+        id: verifyAdmin._id,
+        name: verifyAdmin.name,
+        email: verifyAdmin.email,
+        role: verifyAdmin.role
+      });
+    }
+
   } catch (error) {
     console.error('Error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
   } finally {
     await mongoose.disconnect();
+    console.log('MongoDB disconnected');
     process.exit(0);
   }
 }
