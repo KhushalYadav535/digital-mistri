@@ -68,4 +68,25 @@ router.get(['/profile', '/profile/'], auth, async (req, res) => {
   }
 });
 
+// GET /api/worker/dashboard
+router.get('/dashboard', auth, async (req, res) => {
+  try {
+    const worker = await Worker.findById(req.user.id);
+    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    res.json({
+      id: worker._id,
+      name: worker.name,
+      email: worker.email,
+      phone: worker.phone,
+      services: worker.services || [],
+      stats: worker.stats || {},
+      isVerified: worker.isVerified,
+      // Add more dashboard fields as needed
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 export default router;
+
