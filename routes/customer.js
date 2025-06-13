@@ -19,7 +19,7 @@ router.post('/register', async (req, res) => {
     const customer = await Customer.create({ name, email, phone, password: hashed, address });
     // Generate token
     const token = jwt.sign({ id: customer._id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.status(201).json({ token, customer: { id: customer._id, name, email, phone, address } });
+    res.status(201).json({ token, user: { id: customer._id, name, email, phone, address, role: 'customer' } });
   } catch (err) {
     res.status(500).json({ message: 'Registration failed', error: err.message });
   }
@@ -35,7 +35,7 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, customer.password);
     if (!valid) return res.status(401).json({ message: 'Invalid credentials' });
     const token = jwt.sign({ id: customer._id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, customer: { id: customer._id, name: customer.name, email, phone: customer.phone, address: customer.address } });
+    res.json({ token, user: { id: customer._id, name: customer.name, email, phone: customer.phone, address: customer.address, role: 'customer' } });
   } catch (err) {
     res.status(500).json({ message: 'Login failed', error: err.message });
   }
