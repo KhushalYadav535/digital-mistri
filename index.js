@@ -82,6 +82,14 @@ app.use('/api/worker', workerRoutes);
 import jobRoutes from './routes/job.js';
 app.use('/api/jobs', jobRoutes);
 
+// Shop routes (admin add, customer view)
+import shopRoutes from './routes/shop.js';
+app.use('/api/shops', shopRoutes);
+
+// Customer routes
+import customerRoutes from './routes/customer.js';
+app.use('/api/customer', customerRoutes);
+
 // Notifications
 app.get('/api/notifications', (req, res) => {
   // TODO: Fetch notifications from DB
