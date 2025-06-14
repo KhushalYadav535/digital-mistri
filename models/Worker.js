@@ -6,6 +6,7 @@ const workerSchema = new mongoose.Schema({
   phone: { type: String },
   password: { type: String, required: true },
   isVerified: { type: Boolean, default: false },
+  isAvailable: { type: Boolean, default: true },
   services: [{ type: String }],
   stats: {
     totalBookings: { type: Number, default: 0 },

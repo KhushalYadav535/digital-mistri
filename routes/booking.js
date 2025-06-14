@@ -18,8 +18,9 @@ router.post('/', customerAuth, async (req, res) => {
 
     // Find first available worker for the requested serviceType (case-insensitive)
     const worker = await Worker.findOne({ 
-      services: { $elemMatch: { $regex: new RegExp(`^${serviceType}$`, 'i') } },
-      isAvailable: true // Only find available workers
+      services: { $regex: new RegExp(serviceType, 'i') },
+      isAvailable: true,
+      isVerified: true
     });
     
     if (!worker) {
@@ -46,6 +47,11 @@ router.post('/', customerAuth, async (req, res) => {
         userModel: 'Worker',
         booking: booking._id,
         message: `New booking assigned for service: ${serviceTitle}`
+      });
+
+      // Update worker's stats
+      await Worker.findByIdAndUpdate(worker._id, {
+        $inc: { 'stats.totalBookings': 1 }
       });
     }
 
@@ -76,9 +82,14 @@ router.get('/worker/:workerId', async (req, res) => {
     const bookings = await Booking.find({ 
       worker: req.params.workerId,
       status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
-    }).populate('customer', 'name phone');
+    })
+    .populate('customer', 'name phone')
+    .sort({ createdAt: -1 }); // Most recent first
+    
+    console.log('Found bookings for worker:', req.params.workerId, bookings.length);
     res.json(bookings);
   } catch (err) {
+    console.error('Error fetching worker bookings:', err);
     res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
   }
 });
