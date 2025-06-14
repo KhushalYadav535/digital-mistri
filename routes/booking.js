@@ -11,6 +11,8 @@ router.post('/', customerAuth, async (req, res) => {
   try {
     const { serviceType, serviceTitle, address, phone } = req.body;
     const customer = req.user.id;
+    // Find first available worker for the requested serviceType
+    const worker = await Worker.findOne({ services: serviceType });
     const booking = await Booking.create({
       customer,
       serviceType,
@@ -18,6 +20,7 @@ router.post('/', customerAuth, async (req, res) => {
       address,
       phone,
       status: 'Pending',
+      worker: worker ? worker._id : undefined,
     });
     res.status(201).json(booking);
   } catch (err) {
