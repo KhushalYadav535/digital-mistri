@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import Worker from '../models/Worker.js';
+import Booking from '../models/Booking.js';
 
 const router = express.Router();
 
@@ -102,6 +103,49 @@ router.put('/availability', auth, async (req, res) => {
   } catch (err) {
     console.error('Failed to update availability:', err);
     res.status(500).json({ message: 'Failed to update availability', error: err.message });
+  }
+});
+
+// GET /api/worker/unassigned-bookings
+router.get('/unassigned-bookings', auth, async (req, res) => {
+  try {
+    const worker = await Worker.findById(req.user.id);
+    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    if (!worker.services || worker.services.length === 0) {
+      return res.json([]); // No services, no bookings
+    }
+    // Find all pending bookings matching any of the worker's services
+    const bookings = await Booking.find({
+      status: 'Pending',
+      serviceType: { $in: worker.services }
+    })
+    .populate('customer', 'name phone')
+    .sort({ createdAt: -1 });
+    res.json(bookings);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// PUT /api/worker/accept-booking/:bookingId
+router.put('/accept-booking/:bookingId', auth, async (req, res) => {
+  try {
+    const worker = await Worker.findById(req.user.id);
+    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    // Find the booking and ensure it's still pending
+    const booking = await Booking.findOne({
+      _id: req.params.bookingId,
+      status: 'Pending',
+      worker: { $exists: false }
+    });
+    if (!booking) return res.status(404).json({ message: 'Booking not found or already assigned' });
+    // Assign the booking to this worker
+    booking.worker = worker._id;
+    booking.status = 'Worker Assigned';
+    await booking.save();
+    res.json({ message: 'Booking accepted', booking });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
