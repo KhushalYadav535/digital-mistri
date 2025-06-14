@@ -71,9 +71,19 @@ router.get(['/profile', '/profile/'], auth, async (req, res) => {
 
 // GET /api/worker/dashboard
 router.get('/dashboard', auth, async (req, res) => {
+  console.log('GET /api/worker/dashboard called', req.headers);
   try {
     const worker = await Worker.findById(req.user.id);
-    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    if (!worker) {
+      console.log('Worker not found for dashboard:', req.user.id);
+      return res.status(404).json({ message: 'Worker not found' });
+    }
+    // Fetch assigned bookings for this worker
+    const assignedBookings = await Booking.find({
+      worker: worker._id,
+      status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
+    });
+    console.log('Assigned bookings for worker:', assignedBookings);
     res.json({
       id: worker._id,
       name: worker.name,
@@ -82,9 +92,10 @@ router.get('/dashboard', auth, async (req, res) => {
       services: worker.services || [],
       stats: worker.stats || {},
       isVerified: worker.isVerified,
-      // Add more dashboard fields as needed
+      assignedBookings
     });
   } catch (err) {
+    console.error('Error in worker dashboard:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
@@ -108,10 +119,15 @@ router.put('/availability', auth, async (req, res) => {
 
 // GET /api/worker/unassigned-bookings
 router.get('/unassigned-bookings', auth, async (req, res) => {
+  console.log('GET /api/worker/unassigned-bookings called', req.headers);
   try {
     const worker = await Worker.findById(req.user.id);
-    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    if (!worker) {
+      console.log('Worker not found for unassigned bookings:', req.user.id);
+      return res.status(404).json({ message: 'Worker not found' });
+    }
     if (!worker.services || worker.services.length === 0) {
+      console.log('Worker has no services:', worker._id);
       return res.json([]); // No services, no bookings
     }
     // Find all pending bookings matching any of the worker's services
@@ -121,30 +137,41 @@ router.get('/unassigned-bookings', auth, async (req, res) => {
     })
     .populate('customer', 'name phone')
     .sort({ createdAt: -1 });
+    console.log('Unassigned bookings for worker:', bookings);
     res.json(bookings);
   } catch (err) {
+    console.error('Error in unassigned bookings:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
 // PUT /api/worker/accept-booking/:bookingId
 router.put('/accept-booking/:bookingId', auth, async (req, res) => {
+  console.log('PUT /api/worker/accept-booking called', req.headers, req.params.bookingId);
   try {
     const worker = await Worker.findById(req.user.id);
-    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    if (!worker) {
+      console.log('Worker not found for accept booking:', req.user.id);
+      return res.status(404).json({ message: 'Worker not found' });
+    }
     // Find the booking and ensure it's still pending
     const booking = await Booking.findOne({
       _id: req.params.bookingId,
       status: 'Pending',
       worker: { $exists: false }
     });
-    if (!booking) return res.status(404).json({ message: 'Booking not found or already assigned' });
+    if (!booking) {
+      console.log('Booking not found or already assigned:', req.params.bookingId);
+      return res.status(404).json({ message: 'Booking not found or already assigned' });
+    }
     // Assign the booking to this worker
     booking.worker = worker._id;
     booking.status = 'Worker Assigned';
     await booking.save();
+    console.log('Booking accepted by worker:', booking);
     res.json({ message: 'Booking accepted', booking });
   } catch (err) {
+    console.error('Error in accept booking:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
