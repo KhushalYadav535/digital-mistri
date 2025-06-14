@@ -121,7 +121,16 @@ router.post('/workers', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Name, email, and phone are required' });
     }
     const exists = await Worker.findOne({ email });
-    if (exists) return res.status(400).json({ message: 'Worker already exists' });
+    if (exists) {
+      // Update existing worker's services
+      if (services && services.length > 0) {
+        exists.services = services;
+        await exists.save();
+        console.log('Updated worker services:', { email, services });
+        return res.json(exists);
+      }
+      return res.status(400).json({ message: 'Worker already exists' });
+    }
     // Always set password as hashed phone number
     if (!phone) {
       return res.status(400).json({ message: 'Phone is required for worker password' });
@@ -132,15 +141,21 @@ router.post('/workers', adminAuth, async (req, res) => {
       email,
       phone,
       password: hashedPassword,
-      isVerified: false,
-      services: [],
-      stats: {},
+      isVerified: true, // Auto-verify for testing
+      isAvailable: true,
+      services: services || [],
+      stats: {
+        totalBookings: 0,
+        completedBookings: 0,
+        totalEarnings: 0
+      }
     });
     await worker.save();
-    console.log('Worker created:', { name, email, phone });
+    console.log('Worker created:', { name, email, phone, services });
     res.status(201).json(worker);
   } catch (err) {
-    res.status(500).json({ message: 'Failed to add worker' });
+    console.error('Failed to add worker:', err);
+    res.status(500).json({ message: 'Failed to add worker', error: err.message });
   }
 });
 

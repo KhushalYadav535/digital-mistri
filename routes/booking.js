@@ -53,6 +53,13 @@ router.post('/', customerAuth, async (req, res) => {
       await Worker.findByIdAndUpdate(worker._id, {
         $inc: { 'stats.totalBookings': 1 }
       });
+
+      console.log('Booking assigned to worker:', {
+        workerId: worker._id,
+        workerEmail: worker.email,
+        bookingId: booking._id,
+        serviceType
+      });
     }
 
     res.status(201).json(booking);
@@ -79,6 +86,8 @@ router.get('/:id', customerAuth, async (req, res) => {
 // Worker: Get assigned bookings
 router.get('/worker/:workerId', async (req, res) => {
   try {
+    console.log('Fetching bookings for worker:', req.params.workerId);
+    
     const bookings = await Booking.find({ 
       worker: req.params.workerId,
       status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
@@ -86,7 +95,16 @@ router.get('/worker/:workerId', async (req, res) => {
     .populate('customer', 'name phone')
     .sort({ createdAt: -1 }); // Most recent first
     
-    console.log('Found bookings for worker:', req.params.workerId, bookings.length);
+    console.log('Found bookings for worker:', {
+      workerId: req.params.workerId,
+      count: bookings.length,
+      bookings: bookings.map(b => ({
+        id: b._id,
+        status: b.status,
+        serviceType: b.serviceType
+      }))
+    });
+    
     res.json(bookings);
   } catch (err) {
     console.error('Error fetching worker bookings:', err);
