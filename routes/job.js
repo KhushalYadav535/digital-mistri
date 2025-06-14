@@ -136,6 +136,136 @@ router.post('/:id/reject', workerAuth, async (req, res) => {
   }
 });
 
+// WORKER: Complete a job
+router.post('/:id/complete', workerAuth, async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    if (job.assignedWorker.toString() !== req.user.id) return res.status(403).json({ message: 'Not authorized' });
+    if (job.status !== 'accepted') return res.status(400).json({ message: 'Job not in accepted state' });
+
+    // Update job status
+    job.status = 'completed';
+    job.completedAt = new Date();
+    await job.save();
+
+    // Update worker's earnings
+    const worker = await Worker.findById(req.user.id);
+    if (worker) {
+      const jobAmount = job.details?.amount || 0;
+      worker.stats.totalEarnings = (worker.stats.totalEarnings || 0) + jobAmount;
+      worker.stats.completedBookings = (worker.stats.completedBookings || 0) + 1;
+      
+      // Add new earnings entry
+      worker.stats.earnings = worker.stats.earnings || [];
+      worker.stats.earnings.push({
+        date: new Date(),
+        amount: jobAmount
+      });
+      
+      await worker.save();
+    }
+
+    // Notify worker
+    await Notification.create({
+      type: 'job_completed',
+      user: req.user.id,
+      userModel: 'Worker',
+      job: job._id,
+      message: `You have completed the job for service: ${job.service}`
+    });
+
+    // Notify all admins
+    const admins = await import('../models/Admin.js').then(mod => mod.default.find());
+    await Promise.all(admins.map(a => Notification.create({
+      type: 'job_completed',
+      user: a._id,
+      userModel: 'Admin',
+      job: job._id,
+      message: `Job completed by worker` 
+    })));
+
+    res.json({ message: 'Job completed', job });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to complete job', error: err.message });
+  }
+});
+
+// WORKER: Start a job
+router.post('/:id/start', workerAuth, async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    if (job.assignedWorker.toString() !== req.user.id) return res.status(403).json({ message: 'Not authorized' });
+    if (job.status !== 'accepted') return res.status(400).json({ message: 'Job not in accepted state' });
+
+    // Update job status
+    job.status = 'in_progress';
+    job.startedAt = new Date();
+    await job.save();
+
+    // Notify worker
+    await Notification.create({
+      type: 'job_started',
+      user: req.user.id,
+      userModel: 'Worker',
+      job: job._id,
+      message: `You have started the job for service: ${job.service}`
+    });
+
+    // Notify all admins
+    const admins = await import('../models/Admin.js').then(mod => mod.default.find());
+    await Promise.all(admins.map(a => Notification.create({
+      type: 'job_started',
+      user: a._id,
+      userModel: 'Admin',
+      job: job._id,
+      message: `Job started by worker` 
+    })));
+
+    res.json({ message: 'Job started', job });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to start job', error: err.message });
+  }
+});
+
+// WORKER: Cancel a job
+router.post('/:id/cancel', workerAuth, async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: 'Job not found' });
+    if (job.assignedWorker.toString() !== req.user.id) return res.status(403).json({ message: 'Not authorized' });
+    if (!['accepted', 'in_progress'].includes(job.status)) return res.status(400).json({ message: 'Job cannot be cancelled in current state' });
+
+    // Update job status
+    job.status = 'cancelled';
+    await job.save();
+
+    // Notify worker
+    await Notification.create({
+      type: 'job_cancelled',
+      user: req.user.id,
+      userModel: 'Worker',
+      job: job._id,
+      message: `You have cancelled the job for service: ${job.service}`
+    });
+
+    // Notify all admins
+    const admins = await import('../models/Admin.js').then(mod => mod.default.find());
+    await Promise.all(admins.map(a => Notification.create({
+      type: 'job_cancelled',
+      user: a._id,
+      userModel: 'Admin',
+      job: job._id,
+      message: `Job cancelled by worker` 
+    })));
+
+    res.json({ message: 'Job cancelled', job });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to cancel job', error: err.message });
+  }
+});
+
 // ADMIN: Get all jobs with details
 router.get('/all', adminAuth, async (req, res) => {
   try {
