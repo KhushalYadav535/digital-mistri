@@ -2,7 +2,7 @@
 import mongoose from 'mongoose';
 import Worker from '../models/Worker.js';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/digital-mistri';
+const MONGO_URI = 'mongodb://localhost:27017/digital-mistri'; // <-- Change this if your DB is hosted elsewhere
 
 async function updateWorkerServices(email, services) {
   await mongoose.connect(MONGO_URI);
