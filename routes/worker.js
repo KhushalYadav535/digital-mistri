@@ -88,5 +88,22 @@ router.get('/dashboard', auth, async (req, res) => {
   }
 });
 
+// Update worker availability
+router.put('/availability', auth, async (req, res) => {
+  try {
+    const { isAvailable } = req.body;
+    const worker = await Worker.findByIdAndUpdate(
+      req.user.id,
+      { isAvailable },
+      { new: true }
+    );
+    if (!worker) return res.status(404).json({ message: 'Worker not found' });
+    res.json({ message: 'Availability updated', isAvailable: worker.isAvailable });
+  } catch (err) {
+    console.error('Failed to update availability:', err);
+    res.status(500).json({ message: 'Failed to update availability', error: err.message });
+  }
+});
+
 export default router;
 
