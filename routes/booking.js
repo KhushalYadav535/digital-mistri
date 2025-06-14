@@ -11,8 +11,17 @@ router.post('/', customerAuth, async (req, res) => {
   try {
     const { serviceType, serviceTitle, address, phone } = req.body;
     const customer = req.user.id;
-    // Find first available worker for the requested serviceType
-    const worker = await Worker.findOne({ services: serviceType });
+
+    // DEBUG: Log incoming booking request
+    console.log('Creating booking:', { customer, serviceType, serviceTitle, address, phone });
+
+    // Find first available worker for the requested serviceType (case-insensitive)
+    const worker = await Worker.findOne({ services: { $elemMatch: { $regex: new RegExp(`^${serviceType}$`, 'i') } } });
+    if (!worker) {
+      console.warn('No worker found for serviceType:', serviceType);
+    } else {
+      console.log('Worker assigned:', worker.email, worker.services);
+    }
     const booking = await Booking.create({
       customer,
       serviceType,
@@ -24,6 +33,7 @@ router.post('/', customerAuth, async (req, res) => {
     });
     res.status(201).json(booking);
   } catch (err) {
+    console.error('Booking creation error:', err);
     res.status(500).json({ message: 'Booking failed', error: err.message });
   }
 });
