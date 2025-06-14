@@ -90,7 +90,10 @@ router.get('/dashboard', auth, async (req, res) => {
       email: worker.email,
       phone: worker.phone,
       services: worker.services || [],
-      stats: worker.stats || {},
+      stats: {
+        ...worker.stats,
+        earnings: worker.stats.earnings || []
+      },
       isVerified: worker.isVerified,
       assignedBookings
     });

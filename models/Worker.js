@@ -11,7 +11,11 @@ const workerSchema = new mongoose.Schema({
   stats: {
     totalBookings: { type: Number, default: 0 },
     completedBookings: { type: Number, default: 0 },
-    totalEarnings: { type: Number, default: 0 }
+    totalEarnings: { type: Number, default: 0 },
+    earnings: [{
+      date: { type: Date, default: Date.now },
+      amount: { type: Number, default: 0 }
+    }]
   }
 });
 
