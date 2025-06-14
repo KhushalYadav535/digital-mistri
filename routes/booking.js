@@ -1,0 +1,75 @@
+import express from 'express';
+import Booking from '../models/Booking.js';
+import Customer from '../models/Customer.js';
+import Worker from '../models/Worker.js';
+import { customerAuth } from '../middleware/auth.js';
+
+const router = express.Router();
+
+// Create a new booking (customer)
+router.post('/', customerAuth, async (req, res) => {
+  try {
+    const { serviceType, serviceTitle, address, phone } = req.body;
+    const customer = req.user.id;
+    const booking = await Booking.create({
+      customer,
+      serviceType,
+      serviceTitle,
+      address,
+      phone,
+      status: 'Pending',
+    });
+    res.status(201).json(booking);
+  } catch (err) {
+    res.status(500).json({ message: 'Booking failed', error: err.message });
+  }
+});
+
+// Get booking status (customer)
+router.get('/:id', customerAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id).populate('worker', 'name phone');
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.customer.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+    res.json(booking);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch booking', error: err.message });
+  }
+});
+
+// Worker: Get assigned bookings
+router.get('/worker/:workerId', async (req, res) => {
+  try {
+    const bookings = await Booking.find({ worker: req.params.workerId });
+    res.json(bookings);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
+  }
+});
+
+// Admin: Get all bookings
+router.get('/admin/all', async (req, res) => {
+  try {
+    const bookings = await Booking.find().populate('customer', 'name phone').populate('worker', 'name phone');
+    res.json(bookings);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
+  }
+});
+
+// Update booking status (worker/admin)
+router.put('/:id/status', async (req, res) => {
+  try {
+    const { status, workerId } = req.body;
+    const update = { status };
+    if (workerId) update.worker = workerId;
+    const booking = await Booking.findByIdAndUpdate(req.params.id, update, { new: true });
+    res.json(booking);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update booking', error: err.message });
+  }
+});
+
+export default router;

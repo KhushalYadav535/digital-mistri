@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs';
 import adminRoutes from './routes/admin.js';
 import analyticsRoutes from './routes/analytics.js';
 import workerRoutes from './routes/worker.js';
+import bookingRoutes from './routes/booking.js';
 
 // Load env vars
 dotenv.config();
@@ -78,6 +79,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/admin/analytics', analyticsRoutes);
 // Worker routes
 app.use('/api/worker', workerRoutes);
+app.use('/api/booking', bookingRoutes);
 // Job routes
 import jobRoutes from './routes/job.js';
 app.use('/api/jobs', jobRoutes);
