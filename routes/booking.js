@@ -10,94 +10,248 @@ const router = express.Router();
 
 // Create a new booking (customer)
 router.post('/', customerAuth, async (req, res) => {
+  console.log('=== Booking Request Started ===');
+  console.log('Request Headers:', req.headers);
+  console.log('Request Body:', JSON.stringify(req.body, null, 2));
+  
   try {
-    const { service, subService, bookingDate, bookingTime, address } = req.body;
+    const { 
+      serviceType, 
+      serviceTitle, 
+      bookingDate, 
+      bookingTime, 
+      address,
+      phone 
+    } = req.body;
     const customerId = req.user.id;
 
-    // Get customer profile
-    const customer = await Customer.findById(customerId);
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer profile not found' });
+    console.log('=== Validation Phase ===');
+    console.log('Validating required fields...');
+    if (!serviceType || !serviceTitle || !address || !bookingDate || !bookingTime || !phone) {
+      console.error('Validation failed:', { 
+        serviceType, serviceTitle, address, bookingDate, bookingTime, phone
+      });
+      return res.status(400).json({ 
+        message: 'Missing required fields',
+        required: ['serviceType', 'serviceTitle', 'address', 'bookingDate', 'bookingTime', 'phone']
+      });
     }
 
-    // Extract service type and title from service object
-    const serviceType = service.name.toLowerCase();
-    const serviceTitle = subService;
+    console.log('Validating address structure...');
+    if (!address.street || !address.city || !address.state || !address.pincode) {
+      console.error('Invalid address structure:', address);
+      return res.status(400).json({ 
+        message: 'Invalid address structure',
+        required: ['street', 'city', 'state', 'pincode']
+      });
+    }
 
-    // Format address
-    const formattedAddress = `${address.street}, ${address.city}, ${address.state} - ${address.pincode}`;
-    const phone = customer.phone; // Get phone from customer's profile
+    console.log('Validating date format...');
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(bookingDate)) {
+      console.error('Invalid date format:', bookingDate);
+      return res.status(400).json({ 
+        message: 'Invalid date format. Please use YYYY-MM-DD'
+      });
+    }
 
-    // DEBUG: Log incoming booking request
-    console.log('Creating booking:', { customerId, serviceType, serviceTitle, formattedAddress, phone });
+    console.log('Validating time format...');
+    const timeRegex = /^(?:[01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(bookingTime)) {
+      console.error('Invalid time format:', bookingTime);
+      return res.status(400).json({ 
+        message: 'Invalid time format. Please use HH:MM'
+      });
+    }
 
-    // Find first available worker for the requested serviceType (case-insensitive)
-    const worker = await Worker.findOne({ 
-      services: { $regex: new RegExp(serviceType, 'i') },
+    console.log('Validating phone number...');
+    const phoneRegex = /^[0-9]{10}$/;
+    if (!phoneRegex.test(phone)) {
+      console.error('Invalid phone number:', phone);
+      return res.status(400).json({ 
+        message: 'Invalid phone number. Please enter a 10-digit number'
+      });
+    }
+
+    // Find available worker for the service type
+    console.log('Finding available worker for service:', serviceType);
+    const worker = await Worker.findOne({
       isAvailable: true,
+      services: serviceType,
       isVerified: true
     });
-    
-    if (!worker) {
-      console.warn('No worker found for serviceType:', serviceType);
-    } else {
-      console.log('Worker assigned:', worker.email, worker.services);
-    }
 
-    const booking = await Booking.create({
+    const bookingData = {
       customer: customerId,
       serviceType,
       serviceTitle,
-      address: formattedAddress,
+      bookingDate: new Date(bookingDate),
+      bookingTime,
+      address,
       phone,
       status: worker ? 'Worker Assigned' : 'Pending',
       worker: worker ? worker._id : undefined,
-    });
+      assignedAt: worker ? new Date() : undefined
+    };
 
-    // If worker is assigned, create a notification for them
-    if (worker) {
-      await Notification.create({
-        type: 'booking_assigned',
-        user: worker._id,
-        userModel: 'Worker',
-        booking: booking._id,
-        message: `New booking assigned for service: ${serviceTitle}`
-      });
-
-      // Update worker's stats
-      await Worker.findByIdAndUpdate(worker._id, {
-        $inc: { 'stats.totalBookings': 1 }
-      });
-
-      console.log('Booking assigned to worker:', {
-        workerId: worker._id,
-        workerEmail: worker.email,
+    try {
+      console.log('Attempting to save booking...');
+      const booking = await Booking.create(bookingData);
+      console.log('Booking created successfully:', {
         bookingId: booking._id,
-        serviceType
+        status: booking.status,
+        workerId: booking.worker
+      });
+
+      // If worker is assigned, create notifications
+      if (worker) {
+        console.log('Creating notifications...');
+        
+        // Create notification for worker
+        await Notification.create({
+          type: 'booking_assigned',
+          user: worker._id,
+          userModel: 'Worker',
+          booking: booking._id,
+          message: `New booking assigned for service: ${serviceTitle}`
+        });
+
+        // Create notification for customer
+        await Notification.create({
+          type: 'worker_assigned',
+          user: customerId,
+          userModel: 'Customer',
+          booking: booking._id,
+          message: `A worker has been assigned to your booking for ${serviceTitle}`
+        });
+
+        // Send push notification to worker
+        if (worker.fcmToken) {
+          await sendPushNotification({
+            token: worker.fcmToken,
+            title: 'New Booking Assigned',
+            body: `You have been assigned a new booking for ${serviceTitle}`,
+            data: {
+              type: 'booking_assigned',
+              bookingId: booking._id.toString()
+            }
+          });
+        }
+
+        // Send push notification to customer
+        const customer = await Customer.findById(customerId);
+        if (customer?.fcmToken) {
+          await sendPushNotification({
+            token: customer.fcmToken,
+            title: 'Worker Assigned',
+            body: `A worker has been assigned to your booking for ${serviceTitle}`,
+            data: {
+              type: 'worker_assigned',
+              bookingId: booking._id.toString()
+            }
+          });
+        }
+
+        console.log('Updating worker stats...');
+        await Worker.findByIdAndUpdate(worker._id, {
+          $inc: { 'stats.totalBookings': 1 }
+        });
+
+        console.log('Worker assignment complete:', {
+          workerId: worker._id,
+          workerEmail: worker.email,
+          bookingId: booking._id,
+          serviceType
+        });
+      }
+
+      console.log('=== Booking Process Complete ===');
+      return res.status(201).json(booking);
+    } catch (createError) {
+      console.error('=== Database Error ===');
+      console.error('Error creating booking:', {
+        error: createError,
+        name: createError.name,
+        message: createError.message,
+        stack: createError.stack
+      });
+      
+      if (createError.name === 'ValidationError') {
+        console.error('Validation errors:', createError.errors);
+        return res.status(400).json({ 
+          message: 'Validation error',
+          errors: createError.errors
+        });
+      }
+
+      if (createError.code === 11000) {
+        console.error('Duplicate booking error:', createError);
+        return res.status(400).json({ 
+          message: 'Duplicate booking',
+          error: createError.message
+        });
+      }
+
+      return res.status(500).json({ 
+        message: 'Failed to save booking',
+        error: createError.message
       });
     }
-
-    res.status(201).json(booking);
   } catch (err) {
-    console.error('Booking creation error:', err);
-    res.status(500).json({ message: 'Booking failed', error: err.message });
+    console.error('=== Unexpected Error ===');
+    console.error('Booking creation error:', {
+      error: err,
+      name: err.name,
+      message: err.message,
+      stack: err.stack
+    });
+    
+    return res.status(500).json({ 
+      message: 'Booking failed',
+      error: err.message 
+    });
+  } finally {
+    console.log('=== Booking Request Finished ===');
   }
 });
 
-// Get booking status (customer)
-router.get('/:id', customerAuth, async (req, res) => {
+// Get customer's bookings
+router.get('/customer', customerAuth, async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id)
+    const bookings = await Booking.find({ customer: req.user.id })
       .populate('worker', 'name phone')
-      .populate('customer', 'name phone');
-    
-    if (!booking) return res.status(404).json({ message: 'Booking not found' });
-    if (booking.customer.toString() !== req.user.id) {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
-    res.json(booking);
+      .sort({ createdAt: -1 });
+    res.json(bookings);
   } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch booking', error: err.message });
+    console.error('Error fetching customer bookings:', err);
+    res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
+  }
+});
+
+// Get worker's assigned bookings
+router.get('/worker', workerAuth, async (req, res) => {
+  try {
+    const bookings = await Booking.find({
+      worker: req.user.id,
+      status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
+    })
+    .populate('customer', 'name phone')
+    .sort({ createdAt: -1 });
+    
+    console.log('Found bookings for worker:', {
+      workerId: req.user.id,
+      count: bookings.length,
+      bookings: bookings.map(b => ({
+        id: b._id,
+        status: b.status,
+        serviceType: b.serviceType
+      }))
+    });
+    
+    res.json(bookings);
+  } catch (err) {
+    console.error('Error fetching worker bookings:', err);
+    res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
   }
 });
 
@@ -110,7 +264,7 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
       return res.status(403).json({ message: 'Unauthorized' });
     }
     if (booking.status !== 'Worker Assigned') {
-      return res.status(400).json({ message: 'Booking cannot be accepted' });
+      return res.status(400).json({ message: 'Invalid booking status' });
     }
 
     await Booking.findByIdAndUpdate(req.params.id, {
@@ -129,15 +283,21 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
 
     // Send push notification to customer
     const customer = await Customer.findById(booking.customer);
-    if (customer && customer.expoPushToken) {
-      await sendPushNotification(customer.expoPushToken, {
+    if (customer?.fcmToken) {
+      await sendPushNotification({
+        token: customer.fcmToken,
         title: 'Booking Accepted',
-        body: `Your booking for ${booking.serviceTitle} has been accepted`
+        body: `Your booking for ${booking.serviceTitle} has been accepted`,
+        data: {
+          type: 'booking_accepted',
+          bookingId: booking._id.toString()
+        }
       });
     }
 
     res.json({ message: 'Booking accepted successfully' });
   } catch (err) {
+    console.error('Error accepting booking:', err);
     res.status(500).json({ message: 'Failed to accept booking', error: err.message });
   }
 });
@@ -145,20 +305,19 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
 // Worker reject booking
 router.post('/:id/reject', workerAuth, async (req, res) => {
   try {
-    const { reason } = req.body;
     const booking = await Booking.findById(req.params.id);
     if (!booking) return res.status(404).json({ message: 'Booking not found' });
     if (booking.worker.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Unauthorized' });
     }
     if (booking.status !== 'Worker Assigned') {
-      return res.status(400).json({ message: 'Booking cannot be rejected' });
+      return res.status(400).json({ message: 'Invalid booking status' });
     }
 
     await Booking.findByIdAndUpdate(req.params.id, {
       status: 'Rejected',
-      rejectedAt: new Date(),
-      cancellationReason: reason
+      worker: null,
+      assignedAt: null
     });
 
     // Create notification for customer
@@ -167,44 +326,26 @@ router.post('/:id/reject', workerAuth, async (req, res) => {
       user: booking.customer,
       userModel: 'Customer',
       booking: booking._id,
-      message: `Your booking for ${booking.serviceTitle} has been rejected by the worker: ${reason}`
+      message: `Your booking for ${booking.serviceTitle} has been rejected by the worker`
     });
 
     // Send push notification to customer
     const customer = await Customer.findById(booking.customer);
-    if (customer && customer.expoPushToken) {
-      await sendPushNotification(customer.expoPushToken, {
+    if (customer?.fcmToken) {
+      await sendPushNotification({
+        token: customer.fcmToken,
         title: 'Booking Rejected',
-        body: `Your booking for ${booking.serviceTitle} has been rejected: ${reason}`
-      });
-    }
-
-    // Reassign the booking to another worker
-    const newWorker = await Worker.findOne({ 
-      services: { $regex: new RegExp(booking.serviceType, 'i') },
-      isAvailable: true,
-      isVerified: true,
-      _id: { $ne: booking.worker }
-    });
-
-    if (newWorker) {
-      await Booking.findByIdAndUpdate(req.params.id, {
-        worker: newWorker._id,
-        status: 'Worker Assigned'
-      });
-
-      // Notify new worker
-      await Notification.create({
-        type: 'booking_assigned',
-        user: newWorker._id,
-        userModel: 'Worker',
-        booking: booking._id,
-        message: `New booking assigned for service: ${booking.serviceTitle}`
+        body: `Your booking for ${booking.serviceTitle} has been rejected`,
+        data: {
+          type: 'booking_rejected',
+          bookingId: booking._id.toString()
+        }
       });
     }
 
     res.json({ message: 'Booking rejected successfully' });
   } catch (err) {
+    console.error('Error rejecting booking:', err);
     res.status(500).json({ message: 'Failed to reject booking', error: err.message });
   }
 });
@@ -218,35 +359,6 @@ router.get('/admin', async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(bookings);
   } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
-  }
-});
-
-// Worker: Get assigned bookings
-router.get('/worker/:workerId', async (req, res) => {
-  try {
-    console.log('Fetching bookings for worker:', req.params.workerId);
-    
-    const bookings = await Booking.find({ 
-      worker: req.params.workerId,
-      status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
-    })
-    .populate('customer', 'name phone')
-    .sort({ createdAt: -1 }); // Most recent first
-    
-    console.log('Found bookings for worker:', {
-      workerId: req.params.workerId,
-      count: bookings.length,
-      bookings: bookings.map(b => ({
-        id: b._id,
-        status: b.status,
-        serviceType: b.serviceType
-      }))
-    });
-    
-    res.json(bookings);
-  } catch (err) {
-    console.error('Error fetching worker bookings:', err);
     res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
   }
 });
@@ -271,6 +383,36 @@ router.put('/:id/status', async (req, res) => {
     res.json(booking);
   } catch (err) {
     res.status(500).json({ message: 'Failed to update booking', error: err.message });
+  }
+});
+
+// Get single booking by ID
+router.get('/:id', customerAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Validate booking ID
+    if (!id || id === 'undefined') {
+      return res.status(400).json({ message: 'Invalid booking ID' });
+    }
+
+    const booking = await Booking.findById(id)
+      .populate('worker', 'name phone')
+      .populate('customer', 'name phone');
+    
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+    // Check if the booking belongs to the customer
+    if (booking.customer._id.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    res.json(booking);
+  } catch (err) {
+    console.error('Error fetching booking:', err);
+    res.status(500).json({ message: 'Failed to fetch booking', error: err.message });
   }
 });
 

@@ -3,18 +3,50 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
+import rateLimit from 'express-rate-limit';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Get the directory name using import.meta.url
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Remove leading slash on Windows
+if (process.platform === 'win32' && __dirname.startsWith('/')) {
+  __dirname = __dirname.slice(1);
+}
+
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  dotenv.config({ path: envPath });
+}
 
 import adminRoutes from './routes/admin.js';
 import analyticsRoutes from './routes/analytics.js';
 import workerRoutes from './routes/worker.js';
 import bookingRoutes from './routes/booking.js';
 
-// Load env vars
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI;
+
+// Determine database name based on environment
+const dbName = process.env.NODE_ENV === 'development' 
+  ? 'digital-mistri-dev' 
+  : 'digital-mistri';
+
+// Construct MongoDB URI with database name
+const baseURI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const MONGODB_URI = baseURI.replace(/\/$/, '') + '/' + dbName;
+
+// Log the configuration
+console.log('Starting server with configuration:');
+console.log('Environment:', process.env.NODE_ENV || 'development');
+console.log('Database:', dbName);
+console.log('MongoDB URI:', MONGODB_URI.replace(/:[^@]+@/, ':****@')); // Mask password in logs
+console.log('JWT_SECRET:', process.env.JWT_SECRET ? 'Set' : 'Not set');
+console.log('Port:', PORT);
 
 // Log all incoming requests
 app.use((req, res, next) => {
@@ -23,17 +55,61 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'development' 
+    ? ['http://localhost:3000', 'http://192.168.1.3:3000', 'exp://192.168.1.3:19000']
+    : 'https://digital-mistri.onrender.com',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(express.json());
 
-// Connect to MongoDB
-mongoose.connect(MONGODB_URI, {
+// Request validation middleware
+const validateRequest = (schema) => {
+  return (req, res, next) => {
+    const { error } = schema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        details: error.details.map(detail => detail.message)
+      });
+    }
+    next();
+  };
+};
+
+// Rate limiting middleware
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
+// Apply rate limiting to all requests
+app.use(limiter);
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
+// MongoDB connection configuration
+const mongoConfig = {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-})
+  serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+  socketTimeoutMS: 45000, // Close socket after 45 seconds of inactivity
+  family: 4 // Use IPv4, skip trying IPv6
+};
+
+// Connect to MongoDB
+mongoose.connect(MONGODB_URI, mongoConfig)
   .then(() => {
     console.log('MongoDB connected successfully');
-    console.log('MongoDB URI:', MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//****:****@'));
+    console.log('MongoDB URI:', MONGODB_URI.replace(/\/\/$/, '').replace(/:[^@]+@/, ':****@'));
     console.log('MongoDB Connection State:', mongoose.connection.readyState);
   })
   .catch((err) => {
@@ -43,6 +119,7 @@ mongoose.connect(MONGODB_URI, {
       stack: err.stack,
       name: err.name
     });
+    process.exit(1); // Exit the process if MongoDB connection fails
   });
 
 // Log MongoDB connection state changes
@@ -50,12 +127,29 @@ mongoose.connection.on('connected', () => {
   console.log('MongoDB connection established');
 });
 
-mongoose.connection.on('error', (err) => {
-  console.error('MongoDB connection error:', err);
-});
-
 mongoose.connection.on('disconnected', () => {
   console.log('MongoDB connection disconnected');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('MongoDB connection reconnected');
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM signal received: closing MongoDB connection');
+  await mongoose.connection.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT signal received: closing MongoDB connection');
+  await mongoose.connection.close();
+  process.exit(0);
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err);
 });
 
 // Health check endpoint
@@ -87,6 +181,8 @@ app.use('/api/jobs', jobRoutes);
 // Shop routes (admin add, customer view)
 import shopRoutes from './routes/shop.js';
 app.use('/api/shops', shopRoutes);
+import nearbyShopRoutes from './routes/nearbyShop.js';
+app.use('/api/nearby-shops', nearbyShopRoutes);
 
 // Customer routes
 import customerRoutes from './routes/customer.js';
@@ -141,6 +237,43 @@ app.post('/api/auth/refresh-token', (req, res) => {
 // Root
 app.get('/', (req, res) => {
   res.send('Digital Backend Running');
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  
+  // Handle specific error types
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({
+      error: 'Validation Error',
+      details: err.message
+    });
+  }
+  
+  if (err.name === 'UnauthorizedError') {
+    return res.status(401).json({
+      error: 'Authentication Error',
+      message: 'Invalid or expired token'
+    });
+  }
+  
+  // Default error
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
+
+// Request timeout middleware
+app.use((req, res, next) => {
+  req.setTimeout(5000, () => {
+    res.status(408).json({
+      error: 'Request Timeout',
+      message: 'Request took too long to process'
+    });
+  });
+  next();
 });
 
 // Listen on all interfaces for LAN access

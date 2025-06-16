@@ -1,10 +1,19 @@
 import mongoose from 'mongoose';
 
+const AddressSchema = new mongoose.Schema({
+  street: { type: String, required: true },
+  city: { type: String, required: true },
+  state: { type: String, required: true },
+  pincode: { type: String, required: true }
+});
+
 const BookingSchema = new mongoose.Schema({
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
   serviceType: { type: String, required: true },
   serviceTitle: { type: String, required: true },
-  address: { type: String, required: true },
+  bookingDate: { type: Date, required: true },
+  bookingTime: { type: String, required: true },
+  address: { type: AddressSchema, required: true },
   phone: { type: String, required: true },
   status: { 
     type: String, 
