@@ -38,7 +38,7 @@ const dbName = process.env.NODE_ENV === 'development'
 
 // Construct MongoDB URI with database name
 const baseURI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-const MONGODB_URI = baseURI.replace(/\/$/, '') + '/' + dbName;
+const MONGODB_URI = baseURI.endsWith(dbName) ? baseURI : `${baseURI}/${dbName}`;
 
 // Log the configuration
 console.log('Starting server with configuration:');
