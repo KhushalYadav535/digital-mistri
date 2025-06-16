@@ -2,8 +2,9 @@ import express from 'express';
 import Booking from '../models/Booking.js';
 import Customer from '../models/Customer.js';
 import Worker from '../models/Worker.js';
-import { customerAuth } from '../middleware/auth.js';
+import { customerAuth, workerAuth } from '../middleware/auth.js';
 import Notification from '../models/Notification.js';
+import { sendPushNotification } from '../utils/notifications.js';
 
 const router = express.Router();
 
@@ -72,7 +73,10 @@ router.post('/', customerAuth, async (req, res) => {
 // Get booking status (customer)
 router.get('/:id', customerAuth, async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id).populate('worker', 'name phone');
+    const booking = await Booking.findById(req.params.id)
+      .populate('worker', 'name phone')
+      .populate('customer', 'name phone');
+    
     if (!booking) return res.status(404).json({ message: 'Booking not found' });
     if (booking.customer.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Unauthorized' });
@@ -80,6 +84,127 @@ router.get('/:id', customerAuth, async (req, res) => {
     res.json(booking);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch booking', error: err.message });
+  }
+});
+
+// Worker accept booking
+router.post('/:id/accept', workerAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.worker.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+    if (booking.status !== 'Worker Assigned') {
+      return res.status(400).json({ message: 'Booking cannot be accepted' });
+    }
+
+    await Booking.findByIdAndUpdate(req.params.id, {
+      status: 'Accepted',
+      acceptedAt: new Date()
+    });
+
+    // Create notification for customer
+    await Notification.create({
+      type: 'booking_accepted',
+      user: booking.customer,
+      userModel: 'Customer',
+      booking: booking._id,
+      message: `Your booking for ${booking.serviceTitle} has been accepted by the worker`
+    });
+
+    // Send push notification to customer
+    const customer = await Customer.findById(booking.customer);
+    if (customer && customer.expoPushToken) {
+      await sendPushNotification(customer.expoPushToken, {
+        title: 'Booking Accepted',
+        body: `Your booking for ${booking.serviceTitle} has been accepted`
+      });
+    }
+
+    res.json({ message: 'Booking accepted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to accept booking', error: err.message });
+  }
+});
+
+// Worker reject booking
+router.post('/:id/reject', workerAuth, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (booking.worker.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+    if (booking.status !== 'Worker Assigned') {
+      return res.status(400).json({ message: 'Booking cannot be rejected' });
+    }
+
+    await Booking.findByIdAndUpdate(req.params.id, {
+      status: 'Rejected',
+      rejectedAt: new Date(),
+      cancellationReason: reason
+    });
+
+    // Create notification for customer
+    await Notification.create({
+      type: 'booking_rejected',
+      user: booking.customer,
+      userModel: 'Customer',
+      booking: booking._id,
+      message: `Your booking for ${booking.serviceTitle} has been rejected by the worker: ${reason}`
+    });
+
+    // Send push notification to customer
+    const customer = await Customer.findById(booking.customer);
+    if (customer && customer.expoPushToken) {
+      await sendPushNotification(customer.expoPushToken, {
+        title: 'Booking Rejected',
+        body: `Your booking for ${booking.serviceTitle} has been rejected: ${reason}`
+      });
+    }
+
+    // Reassign the booking to another worker
+    const newWorker = await Worker.findOne({ 
+      services: { $regex: new RegExp(booking.serviceType, 'i') },
+      isAvailable: true,
+      isVerified: true,
+      _id: { $ne: booking.worker }
+    });
+
+    if (newWorker) {
+      await Booking.findByIdAndUpdate(req.params.id, {
+        worker: newWorker._id,
+        status: 'Worker Assigned'
+      });
+
+      // Notify new worker
+      await Notification.create({
+        type: 'booking_assigned',
+        user: newWorker._id,
+        userModel: 'Worker',
+        booking: booking._id,
+        message: `New booking assigned for service: ${booking.serviceTitle}`
+      });
+    }
+
+    res.json({ message: 'Booking rejected successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to reject booking', error: err.message });
+  }
+});
+
+// Admin get all bookings
+router.get('/admin', async (req, res) => {
+  try {
+    const bookings = await Booking.find()
+      .populate('worker', 'name phone')
+      .populate('customer', 'name phone')
+      .sort({ createdAt: -1 });
+    res.json(bookings);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch bookings', error: err.message });
   }
 });
 
