@@ -11,11 +11,19 @@ const router = express.Router();
 // Create a new booking (customer)
 router.post('/', customerAuth, async (req, res) => {
   try {
-    const { serviceType, serviceTitle, address, phone } = req.body;
+    const { service, subService, bookingDate, bookingTime, address } = req.body;
     const customer = req.user.id;
 
+    // Extract service type and title from service object
+    const serviceType = service.name.toLowerCase();
+    const serviceTitle = subService;
+
+    // Format address
+    const formattedAddress = `${address.street}, ${address.city}, ${address.state} - ${address.pincode}`;
+    const phone = req.user.phone; // Get phone from customer's profile
+
     // DEBUG: Log incoming booking request
-    console.log('Creating booking:', { customer, serviceType, serviceTitle, address, phone });
+    console.log('Creating booking:', { customer, serviceType, serviceTitle, formattedAddress, phone });
 
     // Find first available worker for the requested serviceType (case-insensitive)
     const worker = await Worker.findOne({ 
@@ -34,7 +42,7 @@ router.post('/', customerAuth, async (req, res) => {
       customer,
       serviceType,
       serviceTitle,
-      address,
+      address: formattedAddress,
       phone,
       status: worker ? 'Worker Assigned' : 'Pending',
       worker: worker ? worker._id : undefined,
