@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import Worker from '../models/Worker.js';
 import Booking from '../models/Booking.js';
+import { workerAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -33,22 +34,8 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// JWT Authentication middleware
-
-const auth = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader) return res.status(401).json({ message: 'No token provided' });
-  const token = authHeader.split(' ')[1];
-  if (!token) return res.status(401).json({ message: 'No token provided' });
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: 'Invalid token' });
-    req.user = user;
-    next();
-  });
-};
-
 // GET /api/worker/profile (allow with or without trailing slash)
-router.get(['/profile', '/profile/'], auth, async (req, res) => {
+router.get(['/profile', '/profile/'], workerAuth, async (req, res) => {
   console.log('GET /api/worker/profile called', req.headers);
   try {
     const worker = await Worker.findById(req.user.id);
@@ -70,7 +57,7 @@ router.get(['/profile', '/profile/'], auth, async (req, res) => {
 });
 
 // GET /api/worker/dashboard
-router.get('/dashboard', auth, async (req, res) => {
+router.get('/dashboard', workerAuth, async (req, res) => {
   console.log('GET /api/worker/dashboard called', req.headers);
   try {
     const worker = await Worker.findById(req.user.id);
@@ -104,7 +91,7 @@ router.get('/dashboard', auth, async (req, res) => {
 });
 
 // Update worker availability
-router.put('/availability', auth, async (req, res) => {
+router.put('/availability', workerAuth, async (req, res) => {
   try {
     const { isAvailable } = req.body;
     const worker = await Worker.findByIdAndUpdate(
@@ -121,7 +108,7 @@ router.put('/availability', auth, async (req, res) => {
 });
 
 // GET /api/worker/unassigned-bookings
-router.get('/unassigned-bookings', auth, async (req, res) => {
+router.get('/unassigned-bookings', workerAuth, async (req, res) => {
   console.log('GET /api/worker/unassigned-bookings called', req.headers);
   try {
     const worker = await Worker.findById(req.user.id);
@@ -149,7 +136,7 @@ router.get('/unassigned-bookings', auth, async (req, res) => {
 });
 
 // PUT /api/worker/accept-booking/:bookingId
-router.put('/accept-booking/:bookingId', auth, async (req, res) => {
+router.put('/accept-booking/:bookingId', workerAuth, async (req, res) => {
   console.log('PUT /api/worker/accept-booking called', req.headers, req.params.bookingId);
   try {
     const worker = await Worker.findById(req.user.id);
