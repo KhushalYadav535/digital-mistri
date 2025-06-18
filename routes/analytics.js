@@ -54,7 +54,11 @@ router.get('/overview', adminAuth, async (req, res) => {
       },
       services: Object.entries(serviceMap).map(([name, stats]) => ({ name, ...stats })),
       topWorkers,
-      newWorkers
+      newWorkers,
+      totalWorkers: workers.length,
+      activeJobs,
+      totalEarnings: totalRevenue,
+      newRequests: 0 // Replace with actual new requests count if available
     });
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch analytics' });
