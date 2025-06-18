@@ -1,4 +1,6 @@
 import express from 'express';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -27,9 +29,51 @@ import adminRoutes from './routes/admin.js';
 import analyticsRoutes from './routes/analytics.js';
 import workerRoutes from './routes/worker.js';
 import bookingRoutes from './routes/booking.js';
+import serviceRoutes from './routes/service.js';
 
 const app = express();
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: process.env.NODE_ENV === 'development' 
+      ? ['http://localhost:3000', 'http://192.168.1.3:3000', 'exp://192.168.1.3:19000']
+      : 'https://digital-mistri.onrender.com',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    credentials: true
+  }
+});
 const PORT = process.env.PORT || 5000;
+
+// UserID <-> socketId mapping
+const userSocketMap = new Map();
+
+io.on('connection', (socket) => {
+  // On user login, client should emit 'register' with userId and role
+  socket.on('register', ({ userId, role }) => {
+    if (userId) {
+      userSocketMap.set(userId, socket.id);
+      socket.data.userId = userId;
+      socket.data.role = role;
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.data.userId) {
+      userSocketMap.delete(socket.data.userId);
+    }
+  });
+});
+
+// Helper to emit to a user by userId
+export function emitToUser(userId, event, data) {
+  const socketId = userSocketMap.get(userId?.toString());
+  if (socketId) {
+    io.to(socketId).emit(event, data);
+  }
+}
+
+// Attach io to app for access in routes if needed
+app.set('io', io);
 
 // Determine database name based on environment
 const dbName = process.env.NODE_ENV === 'development' 
@@ -173,7 +217,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/admin/analytics', analyticsRoutes);
 // Worker routes
 app.use('/api/worker', workerRoutes);
-app.use('/api/booking', bookingRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/services', serviceRoutes);
 // Job routes
 import jobRoutes from './routes/job.js';
 app.use('/api/jobs', jobRoutes);
@@ -223,15 +268,30 @@ app.get('/api/bookings', (req, res) => {
   // TODO: Fetch bookings from DB
   res.json([]);
 });
-app.post('/api/bookings', (req, res) => {
-  // TODO: Create new booking
-  res.json({ success: true });
-});
 
 // Auth - Refresh token
 app.post('/api/auth/refresh-token', (req, res) => {
   // TODO: Refresh user token
   res.json({ token: 'new_token' });
+});
+
+// --- FAKE PAYMENT ENDPOINT (for demo) ---
+app.post('/api/fake-payment/start', (req, res) => {
+  const { jobId, userId } = req.body;
+  const paymentId = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+  res.json({ paymentId });
+
+  // Simulate payment processing with a delay
+  setTimeout(() => {
+    // Emit payment status to all sockets (for demo, you may want to target a specific user in real app)
+    io.emit('payment-status', {
+      paymentId,
+      jobId,
+      userId,
+      status: 'success',
+      message: 'Payment successful (demo)'
+    });
+  }, 3000); // 3 seconds delay for demo
 });
 
 // Root
@@ -276,7 +336,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Listen on all interfaces for LAN access
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
+// Start the server (Socket.IO)
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

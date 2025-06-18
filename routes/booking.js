@@ -4,7 +4,7 @@ import Customer from '../models/Customer.js';
 import Worker from '../models/Worker.js';
 import { customerAuth, workerAuth } from '../middleware/auth.js';
 import Notification from '../models/Notification.js';
-import { sendPushNotification } from '../utils/notifications.js';
+import { sendPushNotification, sendRealTimeNotification } from '../utils/notifications.js';
 
 const router = express.Router();
 
@@ -73,14 +73,7 @@ router.post('/', customerAuth, async (req, res) => {
       });
     }
 
-    // Find available worker for the service type
-    console.log('Finding available worker for service:', serviceType);
-    const worker = await Worker.findOne({
-      isAvailable: true,
-      services: serviceType,
-      isVerified: true
-    });
-
+    // Create booking without assigning worker
     const bookingData = {
       customer: customerId,
       serviceType,
@@ -89,9 +82,7 @@ router.post('/', customerAuth, async (req, res) => {
       bookingTime,
       address,
       phone,
-      status: worker ? 'Worker Assigned' : 'Pending',
-      worker: worker ? worker._id : undefined,
-      assignedAt: worker ? new Date() : undefined
+      status: 'Pending'
     };
 
     try {
@@ -99,99 +90,52 @@ router.post('/', customerAuth, async (req, res) => {
       const booking = await Booking.create(bookingData);
       console.log('Booking created successfully:', {
         bookingId: booking._id,
-        status: booking.status,
-        workerId: booking.worker
+        status: booking.status
       });
 
-      // If worker is assigned, create notifications
-      if (worker) {
-        console.log('Creating notifications...');
-        
-        // Create notification for worker
-        await Notification.create({
-          type: 'booking_assigned',
+      // Find all available workers for this service type
+      const availableWorkers = await Worker.find({
+        services: serviceType,
+        isVerified: true,
+        isAvailable: true
+      });
+
+      // Create notifications for all available workers
+      await Promise.all(availableWorkers.map(worker => 
+        Notification.create({
+          type: 'new_booking_available',
           user: worker._id,
           userModel: 'Worker',
           booking: booking._id,
-          message: `New booking assigned for service: ${serviceTitle}`
-        });
+          message: `New booking available for service: ${serviceTitle}`
+        })
+      ));
 
-        // Create notification for customer
-        await Notification.create({
-          type: 'worker_assigned',
-          user: customerId,
-          userModel: 'Customer',
-          booking: booking._id,
-          message: `A worker has been assigned to your booking for ${serviceTitle}`
-        });
-
-        // Send push notification to worker
+      // Send push notifications to all available workers
+      await Promise.all(availableWorkers.map(async worker => {
         if (worker.fcmToken) {
           await sendPushNotification({
             token: worker.fcmToken,
-            title: 'New Booking Assigned',
-            body: `You have been assigned a new booking for ${serviceTitle}`,
+            title: 'New Booking Available',
+            body: `A new booking is available for ${serviceTitle}`,
             data: {
-              type: 'booking_assigned',
+              type: 'new_booking_available',
               bookingId: booking._id.toString()
             }
           });
         }
-
-        // Send push notification to customer
-        const customer = await Customer.findById(customerId);
-        if (customer?.fcmToken) {
-          await sendPushNotification({
-            token: customer.fcmToken,
-            title: 'Worker Assigned',
-            body: `A worker has been assigned to your booking for ${serviceTitle}`,
-            data: {
-              type: 'worker_assigned',
-              bookingId: booking._id.toString()
-            }
-          });
-        }
-
-        console.log('Updating worker stats...');
-        await Worker.findByIdAndUpdate(worker._id, {
-          $inc: { 'stats.totalBookings': 1 }
+        sendRealTimeNotification(worker._id, {
+          type: 'new_booking_available',
+          message: `New booking available for service: ${serviceTitle}`,
+          bookingId: booking._id.toString()
         });
-
-        console.log('Worker assignment complete:', {
-          workerId: worker._id,
-          workerEmail: worker.email,
-          bookingId: booking._id,
-          serviceType
-        });
-      }
+      }));
 
       console.log('=== Booking Process Complete ===');
       return res.status(201).json(booking);
     } catch (createError) {
       console.error('=== Database Error ===');
-      console.error('Error creating booking:', {
-        error: createError,
-        name: createError.name,
-        message: createError.message,
-        stack: createError.stack
-      });
-      
-      if (createError.name === 'ValidationError') {
-        console.error('Validation errors:', createError.errors);
-        return res.status(400).json({ 
-          message: 'Validation error',
-          errors: createError.errors
-        });
-      }
-
-      if (createError.code === 11000) {
-        console.error('Duplicate booking error:', createError);
-        return res.status(400).json({ 
-          message: 'Duplicate booking',
-          error: createError.message
-        });
-      }
-
+      console.error('Error creating booking:', createError);
       return res.status(500).json({ 
         message: 'Failed to save booking',
         error: createError.message
@@ -199,19 +143,11 @@ router.post('/', customerAuth, async (req, res) => {
     }
   } catch (err) {
     console.error('=== Unexpected Error ===');
-    console.error('Booking creation error:', {
-      error: err,
-      name: err.name,
-      message: err.message,
-      stack: err.stack
-    });
-    
+    console.error('Booking creation error:', err);
     return res.status(500).json({ 
       message: 'Booking failed',
       error: err.message 
     });
-  } finally {
-    console.log('=== Booking Request Finished ===');
   }
 });
 
@@ -259,26 +195,49 @@ router.get('/worker', workerAuth, async (req, res) => {
 router.post('/:id/accept', workerAuth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id);
-    if (!booking) return res.status(404).json({ message: 'Booking not found' });
-    if (booking.worker.toString() !== req.user.id) {
-      return res.status(403).json({ message: 'Unauthorized' });
-    }
-    if (booking.status !== 'Worker Assigned') {
-      return res.status(400).json({ message: 'Invalid booking status' });
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
     }
 
-    await Booking.findByIdAndUpdate(req.params.id, {
-      status: 'Accepted',
-      acceptedAt: new Date()
-    });
+    // Check if booking is still pending
+    if (booking.status !== 'Pending') {
+      return res.status(400).json({ message: 'Booking is no longer available' });
+    }
+
+    // Check if worker is available and verified
+    const worker = await Worker.findById(req.user.id);
+    if (!worker.isAvailable || !worker.isVerified) {
+      return res.status(400).json({ message: 'Worker is not available or not verified' });
+    }
+
+    // Check if worker provides this service
+    if (!worker.services.includes(booking.serviceType)) {
+      return res.status(400).json({ message: 'Worker does not provide this service' });
+    }
+
+    // Update booking with worker assignment
+    booking.worker = req.user.id;
+    booking.status = 'Worker Assigned';
+    booking.assignedAt = new Date();
+    await booking.save();
 
     // Create notification for customer
     await Notification.create({
-      type: 'booking_accepted',
+      type: 'worker_assigned',
       user: booking.customer,
       userModel: 'Customer',
       booking: booking._id,
-      message: `Your booking for ${booking.serviceTitle} has been accepted by the worker`
+      message: `A worker has been assigned to your booking for ${booking.serviceTitle}`
+    });
+    sendRealTimeNotification(req.user.id, {
+      type: 'booking_assigned',
+      message: `You have been assigned a new booking for ${booking.serviceTitle}`,
+      bookingId: booking._id.toString()
+    });
+    sendRealTimeNotification(booking.customer, {
+      type: 'worker_assigned',
+      message: `A worker has been assigned to your booking for ${booking.serviceTitle}`,
+      bookingId: booking._id.toString()
     });
 
     // Send push notification to customer
@@ -286,16 +245,16 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
     if (customer?.fcmToken) {
       await sendPushNotification({
         token: customer.fcmToken,
-        title: 'Booking Accepted',
-        body: `Your booking for ${booking.serviceTitle} has been accepted`,
+        title: 'Worker Assigned',
+        body: `A worker has been assigned to your booking for ${booking.serviceTitle}`,
         data: {
-          type: 'booking_accepted',
+          type: 'worker_assigned',
           bookingId: booking._id.toString()
         }
       });
     }
 
-    res.json({ message: 'Booking accepted successfully' });
+    res.json({ message: 'Booking accepted successfully', booking });
   } catch (err) {
     console.error('Error accepting booking:', err);
     res.status(500).json({ message: 'Failed to accept booking', error: err.message });
@@ -314,11 +273,47 @@ router.post('/:id/reject', workerAuth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid booking status' });
     }
 
-    await Booking.findByIdAndUpdate(req.params.id, {
-      status: 'Rejected',
-      worker: null,
-      assignedAt: null
+    // Unassign worker and set status to Pending so other workers can accept
+    booking.status = 'Pending';
+    booking.worker = null;
+    booking.assignedAt = null;
+    booking.acceptedAt = null;
+    await booking.save();
+
+    // Notify all available workers for this service type
+    const availableWorkers = await Worker.find({
+      services: booking.serviceType,
+      isVerified: true,
+      isAvailable: true
     });
+    await Promise.all(availableWorkers.map(worker =>
+      Notification.create({
+        type: 'new_booking_available',
+        user: worker._id,
+        userModel: 'Worker',
+        booking: booking._id,
+        message: `A new booking is available for ${booking.serviceTitle}`
+      })
+    ));
+    // (Optional) Send push notifications to workers
+    await Promise.all(availableWorkers.map(async worker => {
+      if (worker.fcmToken) {
+        await sendPushNotification({
+          token: worker.fcmToken,
+          title: 'New Booking Available',
+          body: `A new booking is available for ${booking.serviceTitle}`,
+          data: {
+            type: 'new_booking_available',
+            bookingId: booking._id.toString()
+          }
+        });
+      }
+      sendRealTimeNotification(worker._id, {
+        type: 'new_booking_available',
+        message: `New booking available for service: ${booking.serviceTitle}`,
+        bookingId: booking._id.toString()
+      });
+    }));
 
     // Create notification for customer
     await Notification.create({
@@ -327,6 +322,11 @@ router.post('/:id/reject', workerAuth, async (req, res) => {
       userModel: 'Customer',
       booking: booking._id,
       message: `Your booking for ${booking.serviceTitle} has been rejected by the worker`
+    });
+    sendRealTimeNotification(booking.customer, {
+      type: 'booking_rejected',
+      message: `Your booking for ${booking.serviceTitle} has been rejected by the worker`,
+      bookingId: booking._id.toString()
     });
 
     // Send push notification to customer
@@ -413,6 +413,72 @@ router.get('/:id', customerAuth, async (req, res) => {
   } catch (err) {
     console.error('Error fetching booking:', err);
     res.status(500).json({ message: 'Failed to fetch booking', error: err.message });
+  }
+});
+
+// Cancel a booking (customer)
+router.put('/:id/cancel', customerAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (String(booking.customer) !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to cancel this booking' });
+    }
+    if (['Completed', 'Cancelled', 'Rejected'].includes(booking.status)) {
+      return res.status(400).json({ message: 'Booking cannot be cancelled' });
+    }
+    booking.status = 'Cancelled';
+    booking.cancelledAt = new Date();
+    booking.cancellationReason = req.body.reason || '';
+    await booking.save();
+    // Notify worker if assigned
+    if (booking.worker) {
+      await Notification.create({
+        type: 'booking_cancelled',
+        user: booking.worker,
+        userModel: 'Worker',
+        booking: booking._id,
+        message: `Booking for ${booking.serviceTitle} was cancelled by customer.`
+      });
+    }
+    // Notify customer
+    await Notification.create({
+      type: 'booking_cancelled',
+      user: booking.customer,
+      userModel: 'Customer',
+      booking: booking._id,
+      message: `Your booking for ${booking.serviceTitle} has been cancelled.`
+    });
+    res.json({ message: 'Booking cancelled successfully', booking });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to cancel booking', error: err.message });
+  }
+});
+
+// Get booking status/details (customer)
+router.get('/:id', customerAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id)
+      .populate('worker', 'name phone')
+      .populate('customer', 'name phone email');
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (String(booking.customer._id) !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to view this booking' });
+    }
+    res.json(booking);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch booking details', error: err.message });
+  }
+});
+
+// Customer notifications
+router.get('/notifications/customer', customerAuth, async (req, res) => {
+  try {
+    const notifications = await Notification.find({ user: req.user.id, userModel: 'Customer' })
+      .sort({ createdAt: -1 });
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch notifications', error: err.message });
   }
 });
 

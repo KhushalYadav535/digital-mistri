@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import { emitToUser } from '../index.js';
 
 const EXPO_SERVER_URL = 'https://exp.host/--/api/v2/push/send';
 
@@ -31,4 +32,8 @@ export async function sendPushNotification(token, message) {
     console.error('Error in sendPushNotification:', error);
     throw error;
   }
+}
+
+export function sendRealTimeNotification(userId, notification) {
+  emitToUser(userId, 'notification', notification);
 }
