@@ -5,6 +5,7 @@ import Worker from '../models/Worker.js';
 import { customerAuth, workerAuth } from '../middleware/auth.js';
 import Notification from '../models/Notification.js';
 import { sendPushNotification, sendRealTimeNotification } from '../utils/notifications.js';
+import nodemailer from 'nodemailer';
 
 const router = express.Router();
 
@@ -479,6 +480,97 @@ router.get('/notifications/customer', customerAuth, async (req, res) => {
     res.json(notifications);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch notifications', error: err.message });
+  }
+});
+
+// Helper to send OTP email
+async function sendOtpEmail(to, otp, serviceTitle) {
+  // Configure your SMTP transport here
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error('SMTP credentials not set in environment variables');
+  }
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to,
+    subject: `OTP for Service Completion: ${serviceTitle}`,
+    text: `Your OTP to verify service completion is: ${otp}`
+  });
+}
+
+// Worker requests completion: generate/send OTP
+router.put('/:id/request-completion', workerAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id).populate('customer', 'email name');
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (!booking.worker || String(booking.worker) !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (booking.status !== 'In Progress' && booking.status !== 'Worker Assigned' && booking.status !== 'Accepted' && booking.status !== 'in_progress') {
+      return res.status(400).json({ message: 'Booking not in progress' });
+    }
+    // Log customer email for debugging
+    console.log('Requesting completion for booking:', booking._id);
+    console.log('Customer email:', booking.customer.email);
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    booking.completionOtp = otp;
+    booking.completionOtpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+    await booking.save();
+    // Send OTP to customer email
+    await sendOtpEmail(booking.customer.email, otp, booking.serviceTitle);
+    res.json({ message: 'OTP sent to customer email' });
+  } catch (err) {
+    console.error('Failed to request completion:', err);
+    res.status(500).json({ message: 'Failed to request completion', error: err.message, stack: err.stack });
+  }
+});
+
+// Worker verifies OTP to complete booking
+router.put('/:id/verify-completion', workerAuth, async (req, res) => {
+  try {
+    const { otp } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (!booking.worker || String(booking.worker) !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (!booking.completionOtp || !booking.completionOtpExpires) {
+      return res.status(400).json({ message: 'No OTP requested' });
+    }
+    if (booking.completionOtpExpires < new Date()) {
+      return res.status(400).json({ message: 'OTP expired' });
+    }
+    // Debug logs for OTP comparison
+    console.log('Booking.completionOtp:', booking.completionOtp);
+    console.log('User entered OTP:', otp);
+    console.log('Type booking.completionOtp:', typeof booking.completionOtp);
+    console.log('Type user entered OTP:', typeof otp);
+    if (String(booking.completionOtp) !== String(otp)) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+    booking.status = 'Completed';
+    booking.completedAt = new Date();
+    booking.completionOtp = undefined;
+    booking.completionOtpExpires = undefined;
+    await booking.save();
+    // Notify customer
+    await Notification.create({
+      type: 'booking_completed',
+      user: booking.customer,
+      userModel: 'Customer',
+      booking: booking._id,
+      message: `Your booking for ${booking.serviceTitle} has been marked as completed.`
+    });
+    res.json({ message: 'Booking marked as completed', booking });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to verify OTP', error: err.message });
   }
 });
 

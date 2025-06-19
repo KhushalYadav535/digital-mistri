@@ -28,6 +28,9 @@ const BookingSchema = new mongoose.Schema({
   completedAt: { type: Date },
   cancelledAt: { type: Date },
   cancellationReason: { type: String },
+  // OTP for completion verification
+  completionOtp: { type: String },
+  completionOtpExpires: { type: Date },
   createdAt: { type: Date, default: Date.now }
 });
 

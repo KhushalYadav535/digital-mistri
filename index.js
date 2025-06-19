@@ -129,8 +129,10 @@ const limiter = rateLimit({
   max: 100 // limit each IP to 100 requests per windowMs
 });
 
-// Apply rate limiting to all requests
-app.use(limiter);
+// Apply rate limiting only in production
+if (process.env.NODE_ENV !== 'development') {
+  app.use(limiter);
+}
 
 // Security headers
 app.use((req, res, next) => {
