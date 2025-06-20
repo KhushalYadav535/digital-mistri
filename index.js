@@ -165,7 +165,13 @@ mongoose.connect(MONGODB_URI, mongoConfig)
       stack: err.stack,
       name: err.name
     });
-    process.exit(1); // Exit the process if MongoDB connection fails
+    
+    // In development, don't exit the process, just log the error
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Continuing without MongoDB in development mode...');
+    } else {
+      process.exit(1); // Exit the process if MongoDB connection fails in production
+    }
   });
 
 // Log MongoDB connection state changes

@@ -3,7 +3,9 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 import Worker from '../models/Worker.js';
+import Service from '../models/Service.js';
 import { adminAuth } from '../middleware/auth.js';
+import mongoose from 'mongoose';
 
 const router = express.Router();
 
@@ -95,6 +97,43 @@ router.post('/auth/refresh-token', adminAuth, (req, res) => {
 // Get all workers
 router.get('/workers', adminAuth, async (req, res) => {
   try {
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('MongoDB not connected, returning mock data');
+      // Return mock data for development
+      const mockWorkers = [
+        {
+          _id: 'mock-worker-1',
+          name: 'John Doe',
+          email: 'john@example.com',
+          phone: '1234567890',
+          isVerified: true,
+          isAvailable: true,
+          services: ['plumber', 'electrician'],
+          stats: {
+            totalBookings: 15,
+            completedBookings: 12,
+            totalEarnings: 2500
+          }
+        },
+        {
+          _id: 'mock-worker-2',
+          name: 'Jane Smith',
+          email: 'jane@example.com',
+          phone: '0987654321',
+          isVerified: false,
+          isAvailable: true,
+          services: ['beautician'],
+          stats: {
+            totalBookings: 8,
+            completedBookings: 6,
+            totalEarnings: 1200
+          }
+        }
+      ];
+      return res.json(mockWorkers);
+    }
+    
     const workers = await Worker.find();
     res.json(workers);
   } catch (err) {
@@ -105,6 +144,46 @@ router.get('/workers', adminAuth, async (req, res) => {
 // Get single worker by ID (admin detail view)
 router.get('/workers/:id', adminAuth, async (req, res) => {
   try {
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('MongoDB not connected, returning mock worker data');
+      // Return mock data for development
+      const mockWorkers = {
+        'mock-worker-1': {
+          _id: 'mock-worker-1',
+          name: 'John Doe',
+          email: 'john@example.com',
+          phone: '1234567890',
+          isVerified: true,
+          isAvailable: true,
+          services: ['plumber', 'electrician'],
+          stats: {
+            totalBookings: 15,
+            completedBookings: 12,
+            totalEarnings: 2500
+          }
+        },
+        'mock-worker-2': {
+          _id: 'mock-worker-2',
+          name: 'Jane Smith',
+          email: 'jane@example.com',
+          phone: '0987654321',
+          isVerified: false,
+          isAvailable: true,
+          services: ['beautician'],
+          stats: {
+            totalBookings: 8,
+            completedBookings: 6,
+            totalEarnings: 1200
+          }
+        }
+      };
+      
+      const worker = mockWorkers[req.params.id];
+      if (!worker) return res.status(404).json({ message: 'Worker not found' });
+      return res.json(worker);
+    }
+    
     const worker = await Worker.findById(req.params.id);
     if (!worker) return res.status(404).json({ message: 'Worker not found' });
     res.json(worker);
@@ -179,6 +258,70 @@ router.delete('/workers/:id', adminAuth, async (req, res) => {
     res.json({ message: 'Worker deleted' });
   } catch (err) {
     res.status(500).json({ message: 'Failed to delete worker' });
+  }
+});
+
+// Get all services (admin)
+router.get('/services', adminAuth, async (req, res) => {
+  try {
+    const services = await Service.find().sort({ createdAt: -1 });
+    res.json(services);
+  } catch (err) {
+    console.error('Failed to fetch services:', err);
+    res.status(500).json({ message: 'Failed to fetch services' });
+  }
+});
+
+// Add new service (admin)
+router.post('/services', adminAuth, async (req, res) => {
+  try {
+    const { name, description, rate, category } = req.body;
+    
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: 'Service name is required' });
+    }
+    if (!rate || isNaN(rate) || rate <= 0) {
+      return res.status(400).json({ message: 'Valid rate is required' });
+    }
+    
+    // Check if service with same name already exists
+    const existingService = await Service.findOne({ name: name.trim() });
+    if (existingService) {
+      return res.status(400).json({ message: 'Service with this name already exists' });
+    }
+    
+    const service = new Service({
+      name: name.trim(),
+      description: description?.trim() || '',
+      rate: parseFloat(rate),
+      category: category?.trim() || 'General',
+      isActive: true
+    });
+    
+    await service.save();
+    console.log('New service created:', { name: service.name, rate: service.rate });
+    res.status(201).json(service);
+  } catch (err) {
+    console.error('Failed to create service:', err);
+    res.status(500).json({ message: 'Failed to create service', error: err.message });
+  }
+});
+
+// Update service status (admin)
+router.put('/services/:id', adminAuth, async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    const service = await Service.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true }
+    );
+    if (!service) return res.status(404).json({ message: 'Service not found' });
+    res.json(service);
+  } catch (err) {
+    console.error('Failed to update service:', err);
+    res.status(500).json({ message: 'Failed to update service' });
   }
 });
 
