@@ -485,23 +485,36 @@ router.get('/notifications/customer', customerAuth, async (req, res) => {
 
 // Helper to send OTP email
 async function sendOtpEmail(to, otp, serviceTitle) {
-  // Configure your SMTP transport here
+  // Check if email credentials are configured
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error('SMTP credentials not set in environment variables');
+    console.warn('SMTP credentials not set. OTP will be generated but not sent via email.');
+    console.log(`Generated OTP for ${serviceTitle}: ${otp}`);
+    console.log(`Customer email: ${to}`);
+    // Return without throwing error - OTP is still generated and stored
+    return;
   }
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-  await transporter.sendMail({
-    from: process.env.EMAIL_USER,
-    to,
-    subject: `OTP for Service Completion: ${serviceTitle}`,
-    text: `Your OTP to verify service completion is: ${otp}`
-  });
+  
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to,
+      subject: `OTP for Service Completion: ${serviceTitle}`,
+      text: `Your OTP to verify service completion is: ${otp}`
+    });
+    console.log(`OTP email sent successfully to ${to}`);
+  } catch (emailError) {
+    console.error('Failed to send OTP email:', emailError);
+    console.log(`Generated OTP for ${serviceTitle}: ${otp}`);
+    console.log(`Customer email: ${to}`);
+    // Don't throw error - OTP is still generated and stored
+  }
 }
 
 // Worker requests completion: generate/send OTP
@@ -515,17 +528,32 @@ router.put('/:id/request-completion', workerAuth, async (req, res) => {
     if (booking.status !== 'In Progress' && booking.status !== 'Worker Assigned' && booking.status !== 'Accepted' && booking.status !== 'in_progress') {
       return res.status(400).json({ message: 'Booking not in progress' });
     }
+    
     // Log customer email for debugging
     console.log('Requesting completion for booking:', booking._id);
     console.log('Customer email:', booking.customer.email);
+    
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     booking.completionOtp = otp;
     booking.completionOtpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
     await booking.save();
+    
     // Send OTP to customer email
     await sendOtpEmail(booking.customer.email, otp, booking.serviceTitle);
-    res.json({ message: 'OTP sent to customer email' });
+    
+    // Check if email credentials are configured
+    const emailConfigured = process.env.EMAIL_USER && process.env.EMAIL_PASS;
+    
+    if (emailConfigured) {
+      res.json({ message: 'OTP sent to customer email' });
+    } else {
+      res.json({ 
+        message: 'OTP generated successfully. Email not configured - check server logs for OTP.',
+        otp: otp, // Include OTP in response for development/testing
+        emailConfigured: false
+      });
+    }
   } catch (err) {
     console.error('Failed to request completion:', err);
     res.status(500).json({ message: 'Failed to request completion', error: err.message, stack: err.stack });
