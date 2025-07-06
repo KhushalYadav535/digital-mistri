@@ -26,9 +26,11 @@ const CustomerSchema = new mongoose.Schema({
     required: [true, 'Password is required'],
     minlength: [6, 'Password must be at least 6 characters long']
   },
-  address: { 
-    type: String,
-    trim: true
+  address: {
+    street: { type: String, trim: true },
+    city: { type: String, trim: true },
+    state: { type: String, trim: true },
+    pincode: { type: String, trim: true }
   },
   createdAt: { 
     type: Date, 
@@ -39,6 +41,12 @@ const CustomerSchema = new mongoose.Schema({
     default: false
   },
   lastLogin: {
+    type: Date
+  },
+  resetPasswordOTP: {
+    type: String
+  },
+  resetPasswordExpires: {
     type: Date
   }
 });
@@ -52,7 +60,12 @@ CustomerSchema.pre('save', function(next) {
   if (this.name) this.name = this.name.trim();
   if (this.email) this.email = this.email.trim().toLowerCase();
   if (this.phone) this.phone = this.phone.trim();
-  if (this.address) this.address = this.address.trim();
+  if (this.address) {
+    if (this.address.street) this.address.street = this.address.street.trim();
+    if (this.address.city) this.address.city = this.address.city.trim();
+    if (this.address.state) this.address.state = this.address.state.trim();
+    if (this.address.pincode) this.address.pincode = this.address.pincode.trim();
+  }
   next();
 });
 

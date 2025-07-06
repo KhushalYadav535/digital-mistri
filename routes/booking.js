@@ -101,14 +101,42 @@ router.post('/', customerAuth, async (req, res) => {
         isAvailable: true
       });
 
+      // Create notification for customer
+      await Notification.create({
+        type: 'booking_created',
+        user: customerId,
+        userModel: 'Customer',
+        title: 'Booking Created Successfully',
+        message: `Your booking for ${serviceTitle} has been created and is pending worker assignment.`,
+        data: { bookingId: booking._id.toString() },
+        read: false
+      });
+
       // Create notifications for all available workers
       await Promise.all(availableWorkers.map(worker => 
         Notification.create({
           type: 'new_booking_available',
           user: worker._id,
           userModel: 'Worker',
-          booking: booking._id,
-          message: `New booking available for service: ${serviceTitle}`
+          title: 'New Booking Available',
+          message: `A new booking is available for ${serviceTitle}`,
+          data: { bookingId: booking._id.toString() },
+          read: false
+        })
+      ));
+
+      // Create notification for admin
+      const Admin = await import('../models/Admin.js').then(mod => mod.default);
+      const admins = await Admin.find();
+      await Promise.all(admins.map(admin => 
+        Notification.create({
+          type: 'new_booking_available',
+          user: admin._id,
+          userModel: 'Admin',
+          title: 'New Booking Created',
+          message: `A new booking has been created for ${serviceTitle}`,
+          data: { bookingId: booking._id.toString() },
+          read: false
         })
       ));
 
@@ -227,9 +255,26 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
       type: 'worker_assigned',
       user: booking.customer,
       userModel: 'Customer',
-      booking: booking._id,
-      message: `A worker has been assigned to your booking for ${booking.serviceTitle}`
+      title: 'Worker Assigned',
+      message: `A worker has been assigned to your booking for ${booking.serviceTitle}`,
+      data: { bookingId: booking._id.toString() },
+      read: false
     });
+
+    // Create notification for admin
+    const Admin = await import('../models/Admin.js').then(mod => mod.default);
+    const admins = await Admin.find();
+    await Promise.all(admins.map(admin => 
+      Notification.create({
+        type: 'worker_assigned',
+        user: admin._id,
+        userModel: 'Admin',
+        title: 'Worker Assigned to Booking',
+        message: `Worker assigned to booking for ${booking.serviceTitle}`,
+        data: { bookingId: booking._id.toString() },
+        read: false
+      })
+    ));
     sendRealTimeNotification(req.user.id, {
       type: 'booking_assigned',
       message: `You have been assigned a new booking for ${booking.serviceTitle}`,
@@ -450,6 +495,19 @@ router.put('/:id/cancel', customerAuth, async (req, res) => {
       booking: booking._id,
       message: `Your booking for ${booking.serviceTitle} has been cancelled.`
     });
+
+    // Notify admin
+    const Admin = await import('../models/Admin.js').then(mod => mod.default);
+    const admins = await Admin.find();
+    await Promise.all(admins.map(admin => 
+      Notification.create({
+        type: 'booking_cancelled',
+        user: admin._id,
+        userModel: 'Admin',
+        booking: booking._id,
+        message: `Booking cancelled for ${booking.serviceTitle}`
+      })
+    ));
     res.json({ message: 'Booking cancelled successfully', booking });
   } catch (err) {
     res.status(500).json({ message: 'Failed to cancel booking', error: err.message });
@@ -596,6 +654,19 @@ router.put('/:id/verify-completion', workerAuth, async (req, res) => {
       booking: booking._id,
       message: `Your booking for ${booking.serviceTitle} has been marked as completed.`
     });
+
+    // Notify admin
+    const Admin = await import('../models/Admin.js').then(mod => mod.default);
+    const admins = await Admin.find();
+    await Promise.all(admins.map(admin => 
+      Notification.create({
+        type: 'booking_completed',
+        user: admin._id,
+        userModel: 'Admin',
+        booking: booking._id,
+        message: `Booking completed for ${booking.serviceTitle}`
+      })
+    ));
     res.json({ message: 'Booking marked as completed', booking });
   } catch (err) {
     res.status(500).json({ message: 'Failed to verify OTP', error: err.message });

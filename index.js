@@ -250,23 +250,9 @@ app.use('/api/nearby-shops', nearbyShopRoutes);
 import customerRoutes from './routes/customer.js';
 app.use('/api/customer', customerRoutes);
 
-// Notifications
-app.get('/api/notifications', (req, res) => {
-  // TODO: Fetch notifications from DB
-  res.json([]);
-});
-app.patch('/api/notifications/:id/read', (req, res) => {
-  // TODO: Mark notification as read
-  res.json({ success: true });
-});
-app.patch('/api/notifications/mark-all-read', (req, res) => {
-  // TODO: Mark all notifications as read
-  res.json({ success: true });
-});
-app.delete('/api/notifications/:id', (req, res) => {
-  // TODO: Delete notification
-  res.json({ success: true });
-});
+// Notification routes
+import notificationRoutes from './routes/notifications.js';
+app.use('/api/notifications', notificationRoutes);
 
 // Support
 app.post('/api/support', (req, res) => {
