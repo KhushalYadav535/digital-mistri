@@ -5,7 +5,7 @@ const JobSchema = new mongoose.Schema({
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
   assignedWorker: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker' },
   candidateWorkers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Worker' }],
-  status: { type: String, enum: ['pending', 'accepted', 'in_progress', 'rejected', 'completed', 'cancelled'], default: 'pending' },
+  status: { type: String, enum: ['Pending', 'Accepted', 'In Progress', 'Rejected', 'Completed', 'Cancelled'], default: 'Pending' },
   requestedAt: { type: Date, default: Date.now },
   acceptedAt: { type: Date },
   startedAt: { type: Date },

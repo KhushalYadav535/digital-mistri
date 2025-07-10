@@ -15,6 +15,7 @@ const BookingSchema = new mongoose.Schema({
   bookingTime: { type: String, required: true },
   address: { type: AddressSchema, required: true },
   phone: { type: String, required: true },
+  amount: { type: Number, required: true },
   status: { 
     type: String, 
     enum: ['Pending', 'Confirmed', 'Worker Assigned', 'Accepted', 'Rejected', 'In Progress', 'Completed', 'Cancelled'],

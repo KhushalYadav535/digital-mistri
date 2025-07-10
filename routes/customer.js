@@ -421,4 +421,60 @@ async function sendPasswordResetEmail(to, otp, customerName) {
   }
 }
 
+// Get customer profile
+router.get('/profile', customerAuth, async (req, res) => {
+  try {
+    const customer = await Customer.findById(req.user.id).select('-password');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+    res.json(customer);
+  } catch (err) {
+    console.error('Error fetching customer profile:', err);
+    res.status(500).json({ message: 'Failed to fetch profile', error: err.message });
+  }
+});
+
+// Get customer statistics
+router.get('/stats', customerAuth, async (req, res) => {
+  try {
+    const customerId = req.user.id;
+    
+    // Import Booking model
+    const Booking = await import('../models/Booking.js').then(mod => mod.default);
+    
+    // Get total bookings
+    const totalBookings = await Booking.countDocuments({ customer: customerId });
+    
+    // Get completed bookings for rating calculation
+    const completedBookings = await Booking.find({ 
+      customer: customerId, 
+      status: 'Completed' 
+    });
+    
+    // Calculate average rating from completed bookings
+    let averageRating = 0;
+    if (completedBookings.length > 0) {
+      const totalRating = completedBookings.reduce((sum, booking) => {
+        return sum + (booking.rating || 0);
+      }, 0);
+      averageRating = totalRating / completedBookings.length;
+    }
+    
+    // Calculate total spent from completed bookings
+    const totalSpent = completedBookings.reduce((sum, booking) => {
+      return sum + (booking.amount || 0);
+    }, 0);
+    
+    res.json({
+      totalBookings,
+      averageRating: Math.round(averageRating * 10) / 10, // Round to 1 decimal place
+      totalSpent
+    });
+  } catch (err) {
+    console.error('Error fetching customer stats:', err);
+    res.status(500).json({ message: 'Failed to fetch statistics', error: err.message });
+  }
+});
+
 export default router;

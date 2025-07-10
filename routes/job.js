@@ -19,7 +19,7 @@ router.post('/book', customerAuth, async (req, res) => {
       customer: req.user.id,
       candidateWorkers: workers.map(w => w._id),
       details,
-      status: 'pending',
+      status: 'Pending',
     });
     // Notify all candidate workers
     await Promise.all(workers.map(w => Notification.create({
@@ -47,7 +47,7 @@ router.post('/book', customerAuth, async (req, res) => {
 // WORKER: Get pending jobs assigned to me (to accept/reject)
 router.get('/pending', workerAuth, async (req, res) => {
   try {
-    const jobs = await Job.find({ candidateWorkers: req.user.id, status: 'pending', rejectedBy: { $ne: req.user.id } });
+    const jobs = await Job.find({ candidateWorkers: req.user.id, status: 'Pending', rejectedBy: { $ne: req.user.id } });
     res.json(jobs);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch pending jobs', error: err.message });
@@ -60,9 +60,9 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ message: 'Job not found' });
     if (!job.candidateWorkers.includes(req.user.id)) return res.status(403).json({ message: 'Not authorized' });
-    if (job.status !== 'pending') return res.status(400).json({ message: 'Job already processed' });
+    if (job.status !== 'Pending') return res.status(400).json({ message: 'Job already processed' });
     job.assignedWorker = req.user.id;
-    job.status = 'accepted';
+    job.status = 'Accepted';
     job.acceptedAt = new Date();
     await job.save();
     // Notify worker
@@ -94,13 +94,13 @@ router.post('/:id/reject', workerAuth, async (req, res) => {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ message: 'Job not found' });
     if (!job.candidateWorkers.includes(req.user.id)) return res.status(403).json({ message: 'Not authorized' });
-    if (job.status !== 'pending') return res.status(400).json({ message: 'Job already processed' });
+    if (job.status !== 'Pending') return res.status(400).json({ message: 'Job already processed' });
     job.rejectedBy.push(req.user.id);
     // Remove this worker from candidates
     job.candidateWorkers = job.candidateWorkers.filter(w => w.toString() !== req.user.id);
     // If no candidates left, mark as rejected
     if (job.candidateWorkers.length === 0) {
-      job.status = 'rejected';
+      job.status = 'Rejected';
       // Notify all admins
       const admins = await import('../models/Admin.js').then(mod => mod.default.find());
       await Promise.all(admins.map(a => Notification.create({
@@ -142,10 +142,10 @@ router.post('/:id/complete', workerAuth, async (req, res) => {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ message: 'Job not found' });
     if (job.assignedWorker.toString() !== req.user.id) return res.status(403).json({ message: 'Not authorized' });
-    if (job.status !== 'accepted') return res.status(400).json({ message: 'Job not in accepted state' });
+    if (job.status !== 'Accepted') return res.status(400).json({ message: 'Job not in accepted state' });
 
     // Update job status
-    job.status = 'completed';
+    job.status = 'Completed';
     job.completedAt = new Date();
     await job.save();
 
@@ -197,10 +197,10 @@ router.post('/:id/start', workerAuth, async (req, res) => {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ message: 'Job not found' });
     if (job.assignedWorker.toString() !== req.user.id) return res.status(403).json({ message: 'Not authorized' });
-    if (job.status !== 'accepted') return res.status(400).json({ message: 'Job not in accepted state' });
+    if (job.status !== 'Accepted') return res.status(400).json({ message: 'Job not in accepted state' });
 
     // Update job status
-    job.status = 'in_progress';
+    job.status = 'In Progress';
     job.startedAt = new Date();
     await job.save();
 
@@ -235,10 +235,10 @@ router.post('/:id/cancel', workerAuth, async (req, res) => {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ message: 'Job not found' });
     if (job.assignedWorker.toString() !== req.user.id) return res.status(403).json({ message: 'Not authorized' });
-    if (!['accepted', 'in_progress'].includes(job.status)) return res.status(400).json({ message: 'Job cannot be cancelled in current state' });
+    if (!['Accepted', 'In Progress'].includes(job.status)) return res.status(400).json({ message: 'Job cannot be cancelled in current state' });
 
     // Update job status
-    job.status = 'cancelled';
+    job.status = 'Cancelled';
     await job.save();
 
     // Notify worker

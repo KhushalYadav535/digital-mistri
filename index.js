@@ -254,11 +254,13 @@ app.use('/api/customer', customerRoutes);
 import notificationRoutes from './routes/notifications.js';
 app.use('/api/notifications', notificationRoutes);
 
-// Support
-app.post('/api/support', (req, res) => {
-  // TODO: Save support request
-  res.json({ success: true });
-});
+// Support routes
+import supportRoutes from './routes/support.js';
+app.use('/api/support', supportRoutes);
+
+// Auth routes
+import authRoutes from './routes/auth.js';
+app.use('/api/auth', authRoutes);
 
 // Change password
 app.post('/api/users/change-password', (req, res) => {

@@ -22,7 +22,8 @@ router.post('/', customerAuth, async (req, res) => {
       bookingDate, 
       bookingTime, 
       address,
-      phone 
+      phone,
+      amount // <-- Add amount from req.body
     } = req.body;
     const customerId = req.user.id;
 
@@ -74,6 +75,26 @@ router.post('/', customerAuth, async (req, res) => {
       });
     }
 
+    // Calculate amount from service if not provided
+    let finalAmount = amount;
+    if (!finalAmount || finalAmount <= 0) {
+      try {
+        const Service = await import('../models/Service.js').then(mod => mod.default);
+        const service = await Service.findOne({ name: serviceTitle });
+        if (service) {
+          finalAmount = service.rate;
+          console.log('Amount calculated from service rate:', finalAmount);
+        } else {
+          // Default amount if service not found
+          finalAmount = 500; // Default amount
+          console.log('Using default amount:', finalAmount);
+        }
+      } catch (serviceError) {
+        console.warn('Could not fetch service rate, using default amount');
+        finalAmount = 500; // Default amount
+      }
+    }
+
     // Create booking without assigning worker
     const bookingData = {
       customer: customerId,
@@ -83,6 +104,7 @@ router.post('/', customerAuth, async (req, res) => {
       bookingTime,
       address,
       phone,
+      amount: finalAmount, // <-- Add calculated amount to bookingData
       status: 'Pending'
     };
 
@@ -91,7 +113,8 @@ router.post('/', customerAuth, async (req, res) => {
       const booking = await Booking.create(bookingData);
       console.log('Booking created successfully:', {
         bookingId: booking._id,
-        status: booking.status
+        status: booking.status,
+        amount: booking.amount
       });
 
       // Find all available workers for this service type
@@ -425,7 +448,47 @@ router.put('/:id/status', async (req, res) => {
     const { status, workerId } = req.body;
     const update = { status };
     if (workerId) update.worker = workerId;
+    
+    // Get the booking before update to check if it's being completed
+    const oldBooking = await Booking.findById(req.params.id);
     const booking = await Booking.findByIdAndUpdate(req.params.id, update, { new: true });
+    
+    // If booking is being marked as completed, update worker stats
+    if (status === 'Completed' && booking.worker) {
+      const Worker = await import('../models/Worker.js').then(mod => mod.default);
+      const worker = await Worker.findById(booking.worker);
+      if (worker) {
+        // Get all worker's completed bookings
+        const allWorkerBookings = await Booking.find({ worker: worker._id });
+        const completedBookings = allWorkerBookings.filter(b => b.status === 'Completed').length;
+        const totalEarnings = allWorkerBookings
+          .filter(b => b.status === 'Completed')
+          .reduce((sum, b) => sum + (b.amount || 0), 0);
+        
+        // Update worker stats
+        worker.stats = {
+          totalBookings: allWorkerBookings.length,
+          completedBookings,
+          totalEarnings,
+          earnings: worker.stats?.earnings || []
+        };
+        
+        // Add today's earnings
+        const today = new Date().toISOString().split('T')[0];
+        const existingEarningIndex = worker.stats.earnings.findIndex(e => e.date === today);
+        if (existingEarningIndex >= 0) {
+          worker.stats.earnings[existingEarningIndex].amount += booking.amount || 0;
+        } else {
+          worker.stats.earnings.push({
+            date: today,
+            amount: booking.amount || 0
+          });
+        }
+        
+        await worker.save();
+      }
+    }
+    
     res.json(booking);
   } catch (err) {
     res.status(500).json({ message: 'Failed to update booking', error: err.message });
@@ -556,10 +619,11 @@ async function sendOtpEmail(to, otp, serviceTitle) {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+        user: process.env.EMAIL_USER ? process.env.EMAIL_USER.trim() : undefined, // .trim() to remove accidental spaces
+        pass: process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : undefined  // .trim() to remove accidental spaces
       }
     });
+    // NOTE: Use Gmail App Password (no spaces) for EMAIL_PASS if 2FA is enabled
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to,
@@ -646,6 +710,40 @@ router.put('/:id/verify-completion', workerAuth, async (req, res) => {
     booking.completionOtp = undefined;
     booking.completionOtpExpires = undefined;
     await booking.save();
+    
+    // Update worker stats
+    const Worker = await import('../models/Worker.js').then(mod => mod.default);
+    const worker = await Worker.findById(booking.worker);
+    if (worker) {
+      // Get all worker's completed bookings
+      const allWorkerBookings = await Booking.find({ worker: worker._id });
+      const completedBookings = allWorkerBookings.filter(b => b.status === 'Completed').length;
+      const totalEarnings = allWorkerBookings
+        .filter(b => b.status === 'Completed')
+        .reduce((sum, b) => sum + (b.amount || 0), 0);
+      
+      // Update worker stats
+      worker.stats = {
+        totalBookings: allWorkerBookings.length,
+        completedBookings,
+        totalEarnings,
+        earnings: worker.stats?.earnings || []
+      };
+      
+      // Add today's earnings
+      const today = new Date().toISOString().split('T')[0];
+      const existingEarningIndex = worker.stats.earnings.findIndex(e => e.date === today);
+      if (existingEarningIndex >= 0) {
+        worker.stats.earnings[existingEarningIndex].amount += booking.amount || 0;
+      } else {
+        worker.stats.earnings.push({
+          date: today,
+          amount: booking.amount || 0
+        });
+      }
+      
+      await worker.save();
+    }
     // Notify customer
     await Notification.create({
       type: 'booking_completed',
