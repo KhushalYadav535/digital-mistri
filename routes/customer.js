@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import Customer from '../models/Customer.js';
-import { customerAuth } from '../middleware/auth.js';
+import { customerAuth, adminAuth } from '../middleware/auth.js';
 import nodemailer from 'nodemailer';
 
 const router = express.Router();
@@ -474,6 +474,60 @@ router.get('/stats', customerAuth, async (req, res) => {
   } catch (err) {
     console.error('Error fetching customer stats:', err);
     res.status(500).json({ message: 'Failed to fetch statistics', error: err.message });
+  }
+});
+
+// Admin: Get all customers
+router.get('/admin/all', adminAuth, async (req, res) => {
+  try {
+    const customers = await Customer.find().select('-password').sort({ createdAt: -1 });
+    res.json(customers);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch customers', error: err.message });
+  }
+});
+
+// Admin: Get customer by ID
+router.get('/admin/:id', adminAuth, async (req, res) => {
+  try {
+    const customer = await Customer.findById(req.params.id).select('-password');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+    res.json(customer);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch customer', error: err.message });
+  }
+});
+
+// Admin: Update customer status
+router.put('/admin/:id/status', adminAuth, async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    const customer = await Customer.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true, select: '-password' }
+    );
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+    res.json(customer);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update customer status', error: err.message });
+  }
+});
+
+// Admin: Delete customer
+router.delete('/admin/:id', adminAuth, async (req, res) => {
+  try {
+    const customer = await Customer.findByIdAndDelete(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+    res.json({ message: 'Customer deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete customer', error: err.message });
   }
 });
 

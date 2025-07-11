@@ -2,10 +2,11 @@ import express from 'express';
 import Booking from '../models/Booking.js';
 import Customer from '../models/Customer.js';
 import Worker from '../models/Worker.js';
-import { customerAuth, workerAuth } from '../middleware/auth.js';
+import { customerAuth, workerAuth, adminAuth } from '../middleware/auth.js';
 import Notification from '../models/Notification.js';
 import { sendPushNotification, sendRealTimeNotification } from '../utils/notifications.js';
 import nodemailer from 'nodemailer';
+import Job from '../models/Job.js'; // Ensure this is at the top
 
 const router = express.Router();
 
@@ -183,6 +184,25 @@ router.post('/', customerAuth, async (req, res) => {
         });
       }));
 
+      // Create corresponding job entry
+      console.log('Creating corresponding job entry...');
+      const job = await Job.create({
+        service: serviceType,
+        customer: customerId,
+        candidateWorkers: availableWorkers.map(w => w._id),
+        details: {
+          amount: finalAmount,
+          date: bookingDate,
+          time: bookingTime,
+          address,
+          phone,
+          serviceTitle
+        },
+        status: 'Pending',
+        booking: booking._id // Link to the booking
+      });
+      console.log('Job created successfully:', job._id);
+
       console.log('=== Booking Process Complete ===');
       return res.status(201).json(booking);
     } catch (createError) {
@@ -272,6 +292,11 @@ router.post('/:id/accept', workerAuth, async (req, res) => {
     booking.status = 'Worker Assigned';
     booking.assignedAt = new Date();
     await booking.save();
+    // Update Job with assigned worker
+    await Job.findOneAndUpdate(
+      { 'details.bookingId': booking._id },
+      { assignedWorker: req.user.id }
+    );
 
     // Create notification for customer
     await Notification.create({
@@ -420,7 +445,7 @@ router.post('/:id/reject', workerAuth, async (req, res) => {
 });
 
 // Admin get all bookings
-router.get('/admin', async (req, res) => {
+router.get('/admin', adminAuth, async (req, res) => {
   try {
     const bookings = await Booking.find()
       .populate('worker', 'name phone')
@@ -433,7 +458,7 @@ router.get('/admin', async (req, res) => {
 });
 
 // Admin: Get all bookings
-router.get('/admin/all', async (req, res) => {
+router.get('/admin/all', adminAuth, async (req, res) => {
   try {
     const bookings = await Booking.find().populate('customer', 'name phone').populate('worker', 'name phone');
     res.json(bookings);

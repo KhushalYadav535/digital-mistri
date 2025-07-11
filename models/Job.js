@@ -12,6 +12,7 @@ const JobSchema = new mongoose.Schema({
   completedAt: { type: Date },
   rejectedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Worker' }],
   details: { type: Object }, // Extra info (address, time, etc)
+  booking: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking' }, // Link to booking
 }, { timestamps: true });
 
 export default mongoose.model('Job', JobSchema);

@@ -14,7 +14,19 @@ router.get('/customer', customerAuth, async (req, res) => {
     .sort({ createdAt: -1 })
     .limit(50);
     
-    res.json({ notifications });
+    // Transform the notifications to match frontend expectations
+    const transformedNotifications = notifications.map(notification => ({
+      _id: notification._id,
+      userId: notification.user,
+      type: notification.type,
+      title: notification.type, // You can add title mapping here if needed
+      message: notification.message,
+      data: notification.job ? { jobId: notification.job } : {},
+      isRead: notification.read,
+      createdAt: notification.createdAt
+    }));
+    
+    res.json({ notifications: transformedNotifications });
   } catch (err) {
     console.error('Error fetching customer notifications:', err);
     res.status(500).json({ message: 'Failed to fetch notifications', error: err.message });
@@ -198,8 +210,13 @@ router.get('/customer/:userId/count', async (req, res) => {
 });
 
 // Clear all notifications for customer
-router.delete('/customer/:userId/clear-all', async (req, res) => {
+router.delete('/customer/:userId/clear-all', customerAuth, async (req, res) => {
   try {
+    // Verify that the user is clearing their own notifications
+    if (req.params.userId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to clear notifications for another user' });
+    }
+
     await Notification.deleteMany({
       user: req.params.userId,
       userModel: 'Customer'
@@ -209,6 +226,98 @@ router.delete('/customer/:userId/clear-all', async (req, res) => {
   } catch (err) {
     console.error('Error clearing notifications:', err);
     res.status(500).json({ message: 'Failed to clear notifications', error: err.message });
+  }
+});
+
+// Admin: Get all notifications
+router.get('/admin/all', adminAuth, async (req, res) => {
+  try {
+    const notifications = await Notification.find()
+      .populate('user', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(100);
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch notifications', error: err.message });
+  }
+});
+
+// Admin: Send notification to all users
+router.post('/admin/send', adminAuth, async (req, res) => {
+  try {
+    const { title, message, userModel, userIds } = req.body;
+    
+    if (!title || !message) {
+      return res.status(400).json({ message: 'Title and message are required' });
+    }
+
+    let users = [];
+    
+    if (userIds && userIds.length > 0) {
+      // Send to specific users
+      users = userIds;
+    } else if (userModel) {
+      // Send to all users of specific type
+      const UserModel = await import(`../models/${userModel}.js`).then(mod => mod.default);
+      const allUsers = await UserModel.find();
+      users = allUsers.map(user => user._id);
+    } else {
+      return res.status(400).json({ message: 'Either userIds or userModel is required' });
+    }
+
+    const notifications = await Promise.all(
+      users.map(userId => 
+        Notification.create({
+          type: 'admin_notification',
+          user: userId,
+          userModel: userModel || 'Customer',
+          title,
+          message,
+          read: false
+        })
+      )
+    );
+
+    res.json({ 
+      message: `Notification sent to ${notifications.length} users`,
+      count: notifications.length
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to send notification', error: err.message });
+  }
+});
+
+// Admin: Mark notification as read
+router.put('/admin/:id/read', adminAuth, async (req, res) => {
+  try {
+    const notification = await Notification.findByIdAndUpdate(
+      req.params.id,
+      { read: true },
+      { new: true }
+    );
+    
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    
+    res.json(notification);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to mark notification as read', error: err.message });
+  }
+});
+
+// Admin: Delete notification
+router.delete('/admin/:id', adminAuth, async (req, res) => {
+  try {
+    const notification = await Notification.findByIdAndDelete(req.params.id);
+    
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    
+    res.json({ message: 'Notification deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete notification', error: err.message });
   }
 });
 

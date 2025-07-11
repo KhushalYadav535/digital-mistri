@@ -269,7 +269,7 @@ router.post('/:id/cancel', workerAuth, async (req, res) => {
 // ADMIN: Get all jobs with details
 router.get('/all', adminAuth, async (req, res) => {
   try {
-    const jobs = await Job.find().populate('customer assignedWorker candidateWorkers rejectedBy');
+    const jobs = await Job.find().populate('customer assignedWorker candidateWorkers rejectedBy booking');
     res.json(jobs);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch jobs', error: err.message });
