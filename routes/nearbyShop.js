@@ -4,6 +4,7 @@ import path from 'path';
 import NearbyShop from '../models/NearbyShop.js';
 import { adminAuth } from '../middleware/auth.js';
 import { admin } from '../middleware/admin.js';
+import { customerAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -165,21 +166,22 @@ router.get('/:id', async (req, res) => {
 });
 
 // Add a review to a shop
-router.post('/:id/reviews', adminAuth, async (req, res) => {
+router.post('/:id/reviews', customerAuth, async (req, res) => {
   try {
     const { rating, comment } = req.body;
     const shop = await NearbyShop.findById(req.params.id);
-
     if (!shop) {
       return res.status(404).json({ message: 'Shop not found' });
     }
-
-    shop.reviews.push({ rating, comment });
-    
+    // Prevent duplicate reviews by same customer
+    const alreadyReviewed = shop.reviews.some(r => r.user && r.user.toString() === req.user.id);
+    if (alreadyReviewed) {
+      return res.status(400).json({ message: 'You have already reviewed this shop.' });
+    }
+    shop.reviews.push({ user: req.user.id, rating, comment });
     // Update average rating
     const totalRating = shop.reviews.reduce((sum, review) => sum + review.rating, 0);
     shop.rating = totalRating / shop.reviews.length;
-
     await shop.save();
     res.json(shop);
   } catch (err) {

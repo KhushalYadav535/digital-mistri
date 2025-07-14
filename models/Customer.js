@@ -27,11 +27,12 @@ const CustomerSchema = new mongoose.Schema({
     minlength: [6, 'Password must be at least 6 characters long']
   },
   address: {
-    street: { type: String, trim: true },
-    city: { type: String, trim: true },
-    state: { type: String, trim: true },
-    pincode: { type: String, trim: true }
+    street: { type: String, default: '' },
+    city: { type: String, default: '' },
+    state: { type: String, default: '' },
+    pincode: { type: String, default: '' }
   },
+  profileImage: { type: String, default: '' },
   createdAt: { 
     type: Date, 
     default: Date.now 

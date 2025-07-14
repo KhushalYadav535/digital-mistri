@@ -4,8 +4,26 @@ import jwt from 'jsonwebtoken';
 import Customer from '../models/Customer.js';
 import { customerAuth, adminAuth } from '../middleware/auth.js';
 import nodemailer from 'nodemailer';
+import multer from 'multer';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+
+// Multer setup for profile image uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, '../uploads/'));
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    cb(null, `customer_${req.user.id}_${Date.now()}${ext}`);
+  }
+});
+const upload = multer({ storage: storage });
 
 // Register new customer
 router.post('/register', async (req, res) => {
@@ -339,6 +357,28 @@ router.post('/reset-password', async (req, res) => {
   } catch (err) {
     console.error('Reset password error:', err);
     res.status(500).json({ message: 'Failed to reset password', error: err.message });
+  }
+});
+
+// Upload customer profile image
+router.post('/profile-image', customerAuth, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file uploaded' });
+    }
+    const imageUrl = `/uploads/${req.file.filename}`;
+    const customer = await Customer.findByIdAndUpdate(
+      req.user.id,
+      { profileImage: imageUrl },
+      { new: true }
+    ).select('-password');
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+    res.json({ message: 'Profile image updated', profileImage: imageUrl, customer });
+  } catch (err) {
+    console.error('Profile image upload error:', err);
+    res.status(500).json({ message: 'Failed to upload profile image', error: err.message });
   }
 });
 
