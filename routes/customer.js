@@ -4,28 +4,11 @@ import jwt from 'jsonwebtoken';
 import Customer from '../models/Customer.js';
 import { customerAuth, adminAuth } from '../middleware/auth.js';
 import nodemailer from 'nodemailer';
-import multer from 'multer';
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { upload } from '../utils/cloudinary.js';
 
 const router = express.Router();
 
-// Multer setup for profile image uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../uploads/'));
-  },
-  filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    cb(null, `customer_${req.user.id}_${Date.now()}${ext}`);
-  }
-});
-const upload = multer({ storage: storage });
-
-// Register new customer
+// Register new customer (with email verification)
 router.post('/register', async (req, res) => {
   try {
     console.log('Register request body:', req.body); // Debug log
@@ -85,46 +68,48 @@ router.post('/register', async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new customer
+    // Generate email verification OTP
+    const verificationOTP = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Create new customer (unverified)
     const customer = new Customer({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       phone: phone.trim(),
       password: hashedPassword,
-      address: address || {}
+      address: address || {},
+      isVerified: false,
+      emailVerificationOTP: verificationOTP,
+      emailVerificationExpires: otpExpires
     });
 
     // Save customer
     await customer.save();
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        id: customer._id, 
-        role: 'customer',
-        email: customer.email 
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
+    // Send verification email
+    try {
+      await sendEmailVerificationOTP(email, verificationOTP, name.trim());
+      console.log(`Email verification OTP sent to: ${email}`);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+      // Don't fail registration if email fails, but log it
+    }
 
-    // Update last login
-    customer.lastLogin = new Date();
-    await customer.save();
+    console.log('Customer registered successfully (pending verification):', customer.email);
 
-    console.log('Customer registered successfully:', customer.email);
-
-    // Return success response
+    // Return success response (account created but not verified)
     res.status(201).json({
-      message: 'Registration successful',
-      token,
+      message: 'Registration successful! Please check your email for verification OTP.',
+      requiresVerification: true,
       user: {
         id: customer._id,
         name: customer.name,
         email: customer.email,
         phone: customer.phone,
         address: customer.address,
-        role: 'customer'
+        role: 'customer',
+        isVerified: false
       }
     });
 
@@ -155,6 +140,155 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// Verify email with OTP
+router.post('/verify-email', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    
+    if (!email || !otp) {
+      return res.status(400).json({ 
+        message: 'Email and OTP are required' 
+      });
+    }
+
+    // Find customer by email
+    const customer = await Customer.findOne({ email: email.toLowerCase() });
+    if (!customer) {
+      return res.status(404).json({ 
+        message: 'Customer not found' 
+      });
+    }
+
+    // Check if already verified
+    if (customer.isVerified) {
+      return res.status(400).json({ 
+        message: 'Email is already verified' 
+      });
+    }
+
+    // Check if OTP exists and is not expired
+    if (!customer.emailVerificationOTP || !customer.emailVerificationExpires) {
+      return res.status(400).json({ 
+        message: 'No verification OTP found. Please register again.' 
+      });
+    }
+
+    if (customer.emailVerificationExpires < new Date()) {
+      return res.status(400).json({ 
+        message: 'Verification OTP has expired. Please request a new one.' 
+      });
+    }
+
+    // Verify OTP
+    if (customer.emailVerificationOTP !== otp) {
+      return res.status(400).json({ 
+        message: 'Invalid OTP' 
+      });
+    }
+
+    // Mark email as verified
+    customer.isVerified = true;
+    customer.emailVerificationOTP = undefined;
+    customer.emailVerificationExpires = undefined;
+    customer.lastLogin = new Date();
+    await customer.save();
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        id: customer._id, 
+        role: 'customer',
+        email: customer.email 
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '7d' }
+    );
+
+    console.log('Email verified successfully:', customer.email);
+
+    res.json({
+      message: 'Email verified successfully!',
+      token,
+      user: {
+        id: customer._id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        address: customer.address,
+        role: 'customer',
+        isVerified: true
+      }
+    });
+
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({
+      message: 'Email verification failed',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
+  }
+});
+
+// Resend verification OTP
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        message: 'Email is required' 
+      });
+    }
+
+    // Find customer by email
+    const customer = await Customer.findOne({ email: email.toLowerCase() });
+    if (!customer) {
+      return res.status(404).json({ 
+        message: 'Customer not found' 
+      });
+    }
+
+    // Check if already verified
+    if (customer.isVerified) {
+      return res.status(400).json({ 
+        message: 'Email is already verified' 
+      });
+    }
+
+    // Generate new verification OTP
+    const verificationOTP = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Update customer with new OTP
+    customer.emailVerificationOTP = verificationOTP;
+    customer.emailVerificationExpires = otpExpires;
+    await customer.save();
+
+    // Send new verification email
+    try {
+      await sendEmailVerificationOTP(email, verificationOTP, customer.name);
+      console.log(`New email verification OTP sent to: ${email}`);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+      return res.status(500).json({
+        message: 'Failed to send verification email',
+        error: 'Please try again later'
+      });
+    }
+
+    res.json({
+      message: 'New verification OTP sent to your email'
+    });
+
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({
+      message: 'Failed to resend verification OTP',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
+  }
+});
+
 // Login customer
 router.post('/login', async (req, res) => {
   try {
@@ -174,9 +308,44 @@ router.post('/login', async (req, res) => {
       console.log('Invalid credentials for:', email);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
+    
+    // Check if email is verified
+    if (!customer.isVerified) {
+      console.log('Unverified customer trying to login:', email);
+      return res.status(403).json({ 
+        message: 'Email not verified',
+        requiresVerification: true,
+        user: {
+          id: customer._id,
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone,
+          address: customer.address,
+          role: 'customer',
+          isVerified: false
+        }
+      });
+    }
+    
     const token = jwt.sign({ id: customer._id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    // Update last login
+    customer.lastLogin = new Date();
+    await customer.save();
+    
     console.log('Customer logged in:', email);
-    res.json({ token, user: { id: customer._id, name: customer.name, email, phone: customer.phone, address: customer.address, role: 'customer' } });
+    res.json({ 
+      token, 
+      user: { 
+        id: customer._id, 
+        name: customer.name, 
+        email, 
+        phone: customer.phone, 
+        address: customer.address, 
+        role: 'customer',
+        isVerified: true
+      } 
+    });
   } catch (err) {
     console.log('Login error:', err);
     res.status(500).json({ message: 'Login failed', error: err.message });
@@ -275,7 +444,7 @@ router.post('/forgot-password', async (req, res) => {
     await customer.save();
 
     // Send OTP via email
-    await sendPasswordResetEmail(email, otp, customer.name);
+    await sendPasswordResetEmailHelper(email, otp, customer.name);
     
     res.json({ message: 'OTP sent successfully to your email' });
   } catch (err) {
@@ -366,91 +535,44 @@ router.post('/profile-image', customerAuth, upload.single('image'), async (req, 
     if (!req.file) {
       return res.status(400).json({ message: 'No image file uploaded' });
     }
-    const imageUrl = `/uploads/${req.file.filename}`;
+    
+    // Cloudinary returns the optimized URL directly
+    const imageUrl = req.file.path; // This is now the Cloudinary URL
+    
     const customer = await Customer.findByIdAndUpdate(
       req.user.id,
       { profileImage: imageUrl },
       { new: true }
     ).select('-password');
+    
     if (!customer) {
       return res.status(404).json({ message: 'Customer not found' });
     }
-    res.json({ message: 'Profile image updated', profileImage: imageUrl, customer });
+    
+    res.json({ 
+      message: 'Profile image updated', 
+      profileImage: imageUrl, 
+      customer,
+      // Additional optimized URLs for different sizes
+      responsiveUrls: {
+        thumbnail: imageUrl.replace('/upload/', '/upload/w_150,h_150,c_fill/'),
+        small: imageUrl.replace('/upload/', '/upload/w_300,h_300,c_fill/'),
+        medium: imageUrl.replace('/upload/', '/upload/w_600,h_600,c_fill/'),
+        large: imageUrl.replace('/upload/', '/upload/w_1000,h_1000,c_limit/')
+      }
+    });
   } catch (err) {
     console.error('Profile image upload error:', err);
     res.status(500).json({ message: 'Failed to upload profile image', error: err.message });
   }
 });
 
+import { sendPasswordResetEmail, sendEmailVerificationOTP } from '../utils/emailConfig.js';
+
 // Helper function to send password reset email
-async function sendPasswordResetEmail(to, otp, customerName) {
-  // Check if email credentials are configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('SMTP credentials not set. OTP will be generated but not sent via email.');
-    console.log(`Generated OTP for password reset: ${otp}`);
-    console.log(`Customer email: ${to}`);
-    console.log(`Customer name: ${customerName}`);
-    // Return without throwing error - OTP is still generated and stored
-    return;
-  }
-  
+async function sendPasswordResetEmailHelper(to, otp, customerName) {
   try {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: to,
-      subject: 'Password Reset OTP - Digital Mistri',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background-color: #007AFF; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">Digital Mistri</h1>
-            <p style="margin: 5px 0 0 0; font-size: 16px;">Password Reset Request</p>
-          </div>
-          
-          <div style="background-color: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-            <h2 style="color: #333; margin-bottom: 20px;">Hello ${customerName},</h2>
-            
-            <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-              We received a request to reset your password for your Digital Mistri account. 
-              Use the OTP below to complete your password reset:
-            </p>
-            
-            <div style="background-color: #007AFF; color: white; padding: 20px; text-align: center; border-radius: 8px; margin: 30px 0;">
-              <h1 style="margin: 0; font-size: 32px; letter-spacing: 5px;">${otp}</h1>
-              <p style="margin: 10px 0 0 0; font-size: 14px;">Your 6-digit OTP</p>
-            </div>
-            
-            <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-              <strong>Important:</strong>
-            </p>
-            <ul style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-              <li>This OTP is valid for 10 minutes only</li>
-              <li>Do not share this OTP with anyone</li>
-              <li>If you didn't request this, please ignore this email</li>
-            </ul>
-            
-            <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-              If you have any questions, please contact our support team.
-            </p>
-            
-            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
-              <p style="color: #999; font-size: 12px;">
-                This is an automated email. Please do not reply to this message.
-              </p>
-            </div>
-          </div>
-        </div>
-      `
-    };
-
-    await transporter.sendMail(mailOptions);
+    await sendPasswordResetEmail(to, otp, customerName);
     console.log(`Password reset OTP email sent successfully to ${to}`);
   } catch (emailError) {
     console.error('Failed to send password reset email:', emailError);

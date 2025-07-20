@@ -1,5 +1,6 @@
 import express from 'express';
 import Service from '../models/Service.js';
+import ServicePrice from '../models/ServicePrice.js';
 import { adminAuth } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -38,6 +39,16 @@ router.get('/', async (req, res) => {
     res.json(services);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch services', error: err.message });
+  }
+});
+
+// Get all service prices (public)
+router.get('/prices', async (req, res) => {
+  try {
+    const servicePrices = await ServicePrice.find({ isActive: true }).sort({ updatedAt: -1 });
+    res.json(servicePrices);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch service prices', error: err.message });
   }
 });
 

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 import Worker from '../models/Worker.js';
 import Service from '../models/Service.js';
+import ServicePrice from '../models/ServicePrice.js';
 import { adminAuth } from '../middleware/auth.js';
 import mongoose from 'mongoose';
 
@@ -272,6 +273,17 @@ router.get('/services', adminAuth, async (req, res) => {
   }
 });
 
+// Get all service prices (admin)
+router.get('/service-prices', adminAuth, async (req, res) => {
+  try {
+    const servicePrices = await ServicePrice.find({ isActive: true }).sort({ updatedAt: -1 });
+    res.json(servicePrices);
+  } catch (err) {
+    console.error('Failed to fetch service prices:', err);
+    res.status(500).json({ message: 'Failed to fetch service prices' });
+  }
+});
+
 // Add new service (admin)
 router.post('/services', adminAuth, async (req, res) => {
   try {
@@ -322,6 +334,74 @@ router.put('/services/:id', adminAuth, async (req, res) => {
   } catch (err) {
     console.error('Failed to update service:', err);
     res.status(500).json({ message: 'Failed to update service' });
+  }
+});
+
+// Update service price (admin)
+router.put('/services/price/:serviceType/:serviceTitle', adminAuth, async (req, res) => {
+  try {
+    const { serviceType, serviceTitle } = req.params;
+    const { price } = req.body;
+    
+    if (!price || isNaN(price) || price <= 0) {
+      return res.status(400).json({ message: 'Valid price is required' });
+    }
+    
+    // Find existing service price or create new one
+    const servicePrice = await ServicePrice.findOneAndUpdate(
+      { serviceType, serviceTitle },
+      { 
+        price: parseFloat(price),
+        updatedBy: req.user.id,
+        updatedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+    
+    console.log('Service price updated:', { serviceType, serviceTitle, price: servicePrice.price });
+    
+    res.json({ 
+      message: 'Service price updated successfully',
+      serviceType,
+      serviceTitle,
+      price: servicePrice.price
+    });
+  } catch (err) {
+    console.error('Failed to update service price:', err);
+    res.status(500).json({ message: 'Failed to update service price' });
+  }
+});
+
+// Delete service (admin)
+router.delete('/services/:serviceType/:serviceTitle', adminAuth, async (req, res) => {
+  try {
+    const { serviceType, serviceTitle } = req.params;
+    
+    // Deactivate the service price instead of deleting it
+    const servicePrice = await ServicePrice.findOneAndUpdate(
+      { serviceType, serviceTitle },
+      { 
+        isActive: false,
+        updatedBy: req.user.id,
+        updatedAt: new Date()
+      },
+      { new: true }
+    );
+    
+    if (!servicePrice) {
+      return res.status(404).json({ message: 'Service not found' });
+    }
+    
+    console.log('Service deactivated:', { serviceType, serviceTitle });
+    
+    res.json({ 
+      message: 'Service deleted successfully',
+      serviceType,
+      serviceTitle
+    });
+  } catch (err) {
+    console.error('Failed to delete service:', err);
+    res.status(500).json({ message: 'Failed to delete service' });
   }
 });
 

@@ -1,24 +1,11 @@
 import express from 'express';
-import multer from 'multer';
-import path from 'path';
 import NearbyShop from '../models/NearbyShop.js';
 import { adminAuth } from '../middleware/auth.js';
 import { admin } from '../middleware/admin.js';
 import { customerAuth } from '../middleware/auth.js';
+import { upload } from '../utils/cloudinary.js';
 
 const router = express.Router();
-
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, `${file.fieldname}-${Date.now()}${path.extname(file.originalname)}`);
-  },
-});
-
-const upload = multer({ storage: storage });
 
 // Admin: Create a new nearby shop
 router.post('/', [adminAuth, admin, upload.single('image')], async (req, res) => {
@@ -39,7 +26,8 @@ router.post('/', [adminAuth, admin, upload.single('image')], async (req, res) =>
     
     let images = [];
     if (req.file) {
-      images.push(`/uploads/${req.file.filename}`);
+      // Cloudinary returns the optimized URL directly
+      images.push(req.file.path);
     }
 
     // Validate address fields
@@ -187,6 +175,71 @@ router.post('/:id/reviews', customerAuth, async (req, res) => {
   } catch (err) {
     console.error('Error adding review:', err);
     res.status(500).json({ message: 'Failed to add review', error: err.message });
+  }
+});
+
+// Customer: Create a new nearby shop (auto-approved after payment)
+router.post('/customer', [customerAuth, upload.single('image')], async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      phone,
+      email,
+    } = req.body;
+
+    const address = typeof req.body.address === 'string' ? JSON.parse(req.body.address) : req.body.address;
+    const location = typeof req.body.location === 'string' ? JSON.parse(req.body.location) : req.body.location;
+    const services = typeof req.body.services === 'string' ? JSON.parse(req.body.services) : req.body.services;
+    const workingHours = typeof req.body.workingHours === 'string' ? JSON.parse(req.body.workingHours) : req.body.workingHours;
+    
+    let images = [];
+    if (req.file) {
+      // Cloudinary returns the optimized URL directly
+      images.push(req.file.path);
+    }
+
+    // Validate address fields
+    if (!address || !address.street || !address.city || !address.state || !address.pincode) {
+      return res.status(400).json({
+        message: 'Invalid address. Please provide street, city, state, and pincode'
+      });
+    }
+
+    // Validate location coordinates
+    if (!location || !location.coordinates || 
+        !Array.isArray(location.coordinates) || 
+        location.coordinates.length !== 2 ||
+        isNaN(parseFloat(location.coordinates[0])) ||
+        isNaN(parseFloat(location.coordinates[1]))) {
+      return res.status(400).json({ 
+        message: 'Invalid location coordinates. Must provide [longitude, latitude] as numbers' 
+      });
+    }
+
+    const shop = await NearbyShop.create({
+      name,
+      description,
+      address,
+      location: {
+        type: 'Point',
+        coordinates: [
+          parseFloat(location.coordinates[0]),
+          parseFloat(location.coordinates[1])
+        ]
+      },
+      phone,
+      email,
+      services,
+      workingHours,
+      images,
+      isActive: true // auto-approved
+    });
+
+    res.status(201).json(shop);
+  } catch (err) {
+    console.error('Error creating nearby shop (customer):', err);
+    res.status(500).json({ message: 'Failed to create nearby shop', error: err.message });
   }
 });
 

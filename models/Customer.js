@@ -49,6 +49,12 @@ const CustomerSchema = new mongoose.Schema({
   },
   resetPasswordExpires: {
     type: Date
+  },
+  emailVerificationOTP: {
+    type: String
+  },
+  emailVerificationExpires: {
+    type: Date
   }
 });
 

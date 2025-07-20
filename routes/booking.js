@@ -6,6 +6,7 @@ import { customerAuth, workerAuth, adminAuth } from '../middleware/auth.js';
 import Notification from '../models/Notification.js';
 import { sendPushNotification, sendRealTimeNotification } from '../utils/notifications.js';
 import nodemailer from 'nodemailer';
+import { sendOtpEmail } from '../utils/emailConfig.js';
 import Job from '../models/Job.js'; // Ensure this is at the top
 
 const router = express.Router();
@@ -630,31 +631,9 @@ router.get('/notifications/customer', customerAuth, async (req, res) => {
 });
 
 // Helper to send OTP email
-async function sendOtpEmail(to, otp, serviceTitle) {
-  // Check if email credentials are configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('SMTP credentials not set. OTP will be generated but not sent via email.');
-    console.log(`Generated OTP for ${serviceTitle}: ${otp}`);
-    console.log(`Customer email: ${to}`);
-    // Return without throwing error - OTP is still generated and stored
-    return;
-  }
-  
+async function sendOtpEmailHelper(to, otp, serviceTitle) {
   try {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER ? process.env.EMAIL_USER.trim() : undefined, // .trim() to remove accidental spaces
-        pass: process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : undefined  // .trim() to remove accidental spaces
-      }
-    });
-    // NOTE: Use Gmail App Password (no spaces) for EMAIL_PASS if 2FA is enabled
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to,
-      subject: `OTP for Service Completion: ${serviceTitle}`,
-      text: `Your OTP to verify service completion is: ${otp}`
-    });
+    await sendOtpEmail(to, otp, serviceTitle);
     console.log(`OTP email sent successfully to ${to}`);
   } catch (emailError) {
     console.error('Failed to send OTP email:', emailError);
@@ -687,7 +666,7 @@ router.put('/:id/request-completion', workerAuth, async (req, res) => {
     await booking.save();
     
     // Send OTP to customer email
-    await sendOtpEmail(booking.customer.email, otp, booking.serviceTitle);
+    await sendOtpEmailHelper(booking.customer.email, otp, booking.serviceTitle);
     
     // Check if email credentials are configured
     const emailConfigured = process.env.EMAIL_USER && process.env.EMAIL_PASS;
