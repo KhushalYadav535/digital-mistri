@@ -255,12 +255,13 @@ router.get('/bookings', workerAuth, async (req, res) => {
       console.log('Worker not found for bookings:', req.user.id);
       return res.status(404).json({ message: 'Worker not found' });
     }
-    // Fetch assigned bookings for this worker
+    // Fetch assigned bookings for this worker (including child bookings from multiple service bookings)
     const bookings = await Booking.find({
       worker: worker._id,
       status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
     })
     .populate('customer', 'name phone')
+    .populate('parentBooking', 'serviceTitle serviceBreakdown') // Populate parent booking info
     .sort({ createdAt: -1 });
     
     console.log('Found bookings for worker:', {
@@ -269,7 +270,8 @@ router.get('/bookings', workerAuth, async (req, res) => {
       bookings: bookings.map(b => ({
         id: b._id,
         status: b.status,
-        serviceType: b.serviceType
+        serviceType: b.serviceType,
+        isMultipleService: !!b.parentBooking
       }))
     });
     
@@ -311,13 +313,27 @@ router.get('/unassigned-bookings', workerAuth, async (req, res) => {
       return res.json([]); // No services, no bookings
     }
     // Find all pending bookings matching any of the worker's services
+    // Include both standalone bookings and child bookings from multiple service bookings
     const bookings = await Booking.find({
       status: 'Pending',
-      serviceType: { $in: worker.services }
+      serviceType: { $in: worker.services },
+      $or: [
+        { isMultipleServiceBooking: false }, // Standalone bookings
+        { isMultipleServiceBooking: false, parentBooking: { $exists: true } } // Child bookings
+      ]
     })
     .populate('customer', 'name phone')
+    .populate('parentBooking', 'serviceTitle serviceBreakdown') // Populate parent booking info
     .sort({ createdAt: -1 });
-    console.log('Unassigned bookings for worker:', bookings);
+    
+    console.log('Unassigned bookings for worker:', bookings.map(b => ({
+      id: b._id,
+      serviceType: b.serviceType,
+      serviceTitle: b.serviceTitle,
+      isMultipleService: !!b.parentBooking,
+      parentBookingId: b.parentBooking?._id
+    })));
+    
     res.json(bookings);
   } catch (err) {
     console.error('Error in unassigned bookings:', err);

@@ -10,7 +10,7 @@ const defaultServicePrices = [
   { serviceType: 'plumber', serviceTitle: 'Basin Set Fitting/Repair', price: 200 },
   { serviceType: 'plumber', serviceTitle: 'Flush Tank Service', price: 300 },
   { serviceType: 'plumber', serviceTitle: 'Wiring Related Repair', price: 250 },
-  { serviceType: 'plumber', serviceTitle: 'Toti Installation', price: 50 },
+  { serviceType: 'plumber', serviceTitle: 'Toti Installation', price: 8 },
   
   // Electrician services
   { serviceType: 'electrician', serviceTitle: 'Switchbox Installation', price: 150 },

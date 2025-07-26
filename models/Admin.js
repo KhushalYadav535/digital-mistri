@@ -4,7 +4,10 @@ const adminSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  role: { type: String, default: 'admin' }
+  role: { type: String, default: 'admin' },
+  // OTP fields for password change
+  passwordChangeOtp: { type: String },
+  passwordChangeOtpExpiry: { type: Date }
 });
 
 export default mongoose.model('Admin', adminSchema);

@@ -4,6 +4,7 @@ import { adminAuth } from '../middleware/auth.js';
 import { admin } from '../middleware/admin.js';
 import { customerAuth } from '../middleware/auth.js';
 import { upload } from '../utils/cloudinary.js';
+import PendingShop from '../models/PendingShop.js';
 
 const router = express.Router();
 
@@ -240,6 +241,46 @@ router.post('/customer', [customerAuth, upload.single('image')], async (req, res
   } catch (err) {
     console.error('Error creating nearby shop (customer):', err);
     res.status(500).json({ message: 'Failed to create nearby shop', error: err.message });
+  }
+});
+
+// Customer: Initiate payment for new nearby shop
+router.post('/customer-payment', customerAuth, async (req, res) => {
+  try {
+    const { shopData, amount } = req.body;
+    if (!shopData || !amount) {
+      return res.status(400).json({ message: 'Shop data and amount are required' });
+    }
+    const shop = typeof shopData === 'string' ? JSON.parse(shopData) : shopData;
+    const orderId = `SHOP_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const customerName = shop.name || 'Customer';
+    const customerPhone = shop.phone || '0000000000';
+    const customerEmail = shop.email || 'noemail@nomail.com';
+    const returnUrl = `${process.env.CASHFREE_RETURN_URL || 'https://yourdomain.com/payment-success'}?order_id=${orderId}`;
+    // Save pending shop data in DB
+    await PendingShop.create({ orderId: orderId, shopData: shop, amount });
+    res.json({
+      paymentLink: 'https://api.cashfree.com/v2/cftoken/order', // Placeholder for actual payment link
+      orderId: orderId,
+      shopData: shop,
+      amount
+    });
+  } catch (err) {
+    console.error('Error creating shop payment:', err);
+    res.status(500).json({ message: 'Failed to create shop payment', error: err.message });
+  }
+});
+
+// Cashfree webhook for shop payment
+router.post('/customer-payment/webhook', async (req, res) => {
+  try {
+    // This webhook handler is no longer needed as Cashfree integration is removed.
+    // Keeping it for now, but it will not be called by Cashfree.
+    console.log('Cashfree webhook received (no longer used)');
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Shop payment webhook error:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

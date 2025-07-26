@@ -15,7 +15,9 @@ const workerSchema = new mongoose.Schema({
     earnings: [{
       date: { type: Date, default: Date.now },
       amount: { type: Number, default: 0 }
-    }]
+    }],
+    averageRating: { type: Number, default: 0 },
+    reviewCount: { type: Number, default: 0 }
   }
 });
 

@@ -32,7 +32,13 @@ router.get('/overview', adminAuth, async (req, res) => {
     // Top performing workers
     const topWorkers = workers
       .map(w => ({
+        _id: w._id,
         name: w.name,
+        email: w.email,
+        phone: w.phone,
+        isVerified: w.isVerified,
+        services: w.services,
+        stats: w.stats,
         jobs: w.stats?.completedBookings || 0,
         rating: w.stats?.rating || 4.5 // fallback rating
       }))
@@ -44,7 +50,13 @@ router.get('/overview', adminAuth, async (req, res) => {
       .reverse()
       .slice(0, 3)
       .map(w => ({
+        _id: w._id,
         name: w.name,
+        email: w.email,
+        phone: w.phone,
+        isVerified: w.isVerified,
+        services: w.services,
+        stats: w.stats,
         jobs: w.stats?.completedBookings || 0,
         rating: w.stats?.rating || 4.5
       }));

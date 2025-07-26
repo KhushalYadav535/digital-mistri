@@ -36,13 +36,14 @@ import analyticsRoutes from './routes/analytics.js';
 import workerRoutes from './routes/worker.js';
 import bookingRoutes from './routes/booking.js';
 import serviceRoutes from './routes/service.js';
+import paymentRoutes from './routes/payment.js';
 
 const app = express();
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
     origin: process.env.NODE_ENV === 'development' 
-      ? ['http://localhost:3000', 'http://192.168.1.3:3000', 'exp://192.168.1.3:19000']
+      ? ['http://localhost:3000', 'http://192.168.1.43:3000', 'exp://192.168.1.43:19000']
       : 'https://digital-mistri.onrender.com',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     credentials: true
@@ -107,13 +108,15 @@ app.use((req, res, next) => {
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'development' 
-    ? ['http://localhost:3000', 'http://192.168.1.3:3000', 'exp://192.168.1.3:19000']
+    ? ['http://localhost:3000', 'http://192.168.1.43:3000', 'exp://192.168.1.43:19000']
     : 'https://digital-mistri.onrender.com',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
-app.use(express.json());
+// Increase payload limit for base64 images
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Serve static files from the 'uploads' directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -235,6 +238,7 @@ app.use('/api/admin/analytics', analyticsRoutes);
 // Worker routes
 app.use('/api/worker', workerRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/payment', paymentRoutes);
 app.use('/api/services', serviceRoutes);
 // Job routes
 import jobRoutes from './routes/job.js';
@@ -297,6 +301,218 @@ app.post('/api/fake-payment/start', (req, res) => {
       message: 'Payment successful (demo)'
     });
   }, 3000); // 3 seconds delay for demo
+});
+
+
+
+// Real payment endpoint for nearby shop creation
+app.post('/api/real-payment/nearby-shop', async (req, res) => {
+  try {
+    const { shopData, paymentAmount, paymentReference, customerId } = req.body;
+    
+    console.log('💰 Real Payment Request:', {
+      paymentAmount,
+      paymentReference,
+      customerId,
+      hasShopData: !!shopData
+    });
+
+    if (!shopData || !paymentAmount || !customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required data: shopData, paymentAmount, or customerId'
+      });
+    }
+
+    // Validate payment amount (should be 50 for monthly or 8000 for yearly)
+    const validAmounts = [50, 8000];
+    if (!validAmounts.includes(paymentAmount)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment amount. Must be ₹50 (monthly) or ₹8000 (yearly)'
+      });
+    }
+
+    // For real payments, we'll create the shop immediately
+    // In a production system, you'd verify the payment with UPI gateway first
+    try {
+      const NearbyShop = await import('./models/NearbyShop.js').then(mod => mod.default);
+      
+      // Debug: Log image data
+      console.log('🖼️ Real Payment - Image data:', {
+        image: shopData.image,
+        images: shopData.images,
+        hasImage: !!shopData.image,
+        imageType: typeof shopData.image
+      });
+      
+      // Handle images properly with Cloudinary upload
+      let images = [];
+      if (shopData.image) {
+        try {
+          // If it's a local file URI, we need to handle it differently for mobile apps
+          if (shopData.image.startsWith('file://') || shopData.image.startsWith('content://')) {
+            console.log('📱 Mobile app image detected:', shopData.image);
+            
+            // For mobile app images, we can't directly upload file:// URIs to Cloudinary
+            // from the server. We need to either:
+            // 1. Convert to base64 and upload
+            // 2. Use a placeholder for test payments
+            // 3. Skip image for now and let user upload later
+            
+            console.log('⚠️ Real payment: Image upload not supported for mobile app file URIs');
+            // For real payments, we might need to implement base64 upload
+            images = [];
+            
+          } else if (shopData.image.startsWith('data:image/')) {
+            // Base64 image data
+            console.log('📤 Uploading base64 image to Cloudinary...');
+            
+            try {
+              const { cloudinary } = await import('./utils/cloudinary.js');
+              
+              // Upload base64 data to Cloudinary
+              const result = await cloudinary.uploader.upload(shopData.image, {
+                folder: 'digital-mistri',
+                transformation: [
+                  { width: 1000, height: 1000, crop: 'limit' },
+                  { quality: 'auto:good' },
+                  { fetch_format: 'auto' }
+                ]
+              });
+              
+              images = [result.secure_url];
+              console.log('✅ Base64 image uploaded to Cloudinary:', result.secure_url);
+            } catch (uploadError) {
+              console.error('❌ Failed to upload base64 image:', uploadError);
+              images = [];
+            }
+            
+          } else if (shopData.image.startsWith('http')) {
+            // If it's already a URL, use it directly
+            images = [shopData.image];
+            console.log('🔗 Using existing image URL:', shopData.image);
+          } else {
+            // If it's a relative path, construct the full URL properly
+            const baseUrl = process.env.API_URL || 'http://localhost:5000';
+            const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+            const cleanImagePath = shopData.image.replace(/^\//, '');
+            const constructedUrl = `${cleanBaseUrl}/${cleanImagePath}`;
+            
+            console.log('🧪 Real payment detected, attempting Cloudinary upload for local file');
+            try {
+              const { cloudinary } = await import('./utils/cloudinary.js');
+              const result = await cloudinary.uploader.upload(constructedUrl, {
+                folder: 'digital-mistri',
+                transformation: [
+                  { width: 1000, height: 1000, crop: 'limit' },
+                  { quality: 'auto:good' },
+                  { fetch_format: 'auto' }
+                ]
+              });
+              images = [result.secure_url];
+              console.log('✅ Local file uploaded to Cloudinary:', result.secure_url);
+            } catch (uploadError) {
+              console.log('⚠️ Failed to upload local file to Cloudinary, using fallback');
+              images = [];
+            }
+          }
+        } catch (imageError) {
+          console.error('❌ Error processing image:', imageError);
+          images = [];
+        }
+      }
+      
+      // Add fallback image for real shops if no image provided
+      if (images.length === 0) {
+        // Use a simple, reliable placeholder that works on mobile
+        images = ['https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=400&fit=crop'];
+        console.log('📷 Using fallback image for real shop:', images[0]);
+      }
+      
+      const shop = await NearbyShop.create({
+        name: shopData.name.trim(),
+        description: shopData.description.trim(),
+        address: {
+          street: shopData.address.street.trim(),
+          city: shopData.address.city.trim(),
+          state: shopData.address.state.trim(),
+          pincode: shopData.address.pincode.trim()
+        },
+        location: {
+          type: 'Point',
+          coordinates: [
+            parseFloat(shopData.location.coordinates[0]),
+            parseFloat(shopData.location.coordinates[1])
+          ]
+        },
+        phone: shopData.phone.trim(),
+        email: shopData.email.trim(),
+        services: shopData.services || [],
+        workingHours: shopData.workingHours || {
+          monday: { open: '09:00', close: '18:00' },
+          tuesday: { open: '09:00', close: '18:00' },
+          wednesday: { open: '09:00', close: '18:00' },
+          thursday: { open: '09:00', close: '18:00' },
+          friday: { open: '09:00', close: '18:00' },
+          saturday: { open: '09:00', close: '18:00' },
+          sunday: { open: '09:00', close: '18:00' }
+        },
+        images: images,
+        isActive: true,
+        customerId: customerId,
+        paymentAmount: paymentAmount,
+        paymentReference: paymentReference || `PAY_${Date.now()}`,
+        subscriptionType: paymentAmount === 50 ? 'monthly' : 'yearly',
+        subscriptionStartDate: new Date(),
+        subscriptionEndDate: new Date(Date.now() + (paymentAmount === 50 ? 30 : 365) * 24 * 60 * 60 * 1000)
+      });
+
+      console.log('✅ Real payment shop created successfully:', {
+        id: shop._id,
+        name: shop.name,
+        location: shop.location.coordinates,
+        images: shop.images,
+        paymentAmount: shop.paymentAmount,
+        subscriptionType: shop.subscriptionType
+      });
+
+      // Emit real payment success
+      io.emit('real-payment-status', {
+        shopId: shop._id,
+        shopData,
+        paymentAmount,
+        paymentReference,
+        status: 'success',
+        message: `Real payment successful (₹${paymentAmount})`,
+        subscriptionType: shop.subscriptionType
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Real payment successful and shop created',
+        shopId: shop._id,
+        paymentAmount,
+        subscriptionType: shop.subscriptionType
+      });
+
+    } catch (error) {
+      console.error('❌ Error creating real payment shop:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Real payment successful but shop creation failed',
+        error: error.message
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Real payment error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Real payment processing failed',
+      error: error.message
+    });
+  }
 });
 
 // Root

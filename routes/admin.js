@@ -7,6 +7,7 @@ import Service from '../models/Service.js';
 import ServicePrice from '../models/ServicePrice.js';
 import { adminAuth } from '../middleware/auth.js';
 import mongoose from 'mongoose';
+import { sendPasswordResetEmail } from '../utils/emailConfig.js';
 
 const router = express.Router();
 
@@ -416,21 +417,105 @@ router.get('/profile', adminAuth, async (req, res) => {
   }
 });
 
-// Update admin profile
+// Update admin profile (without password change)
 router.put('/profile', adminAuth, async (req, res) => {
   try {
     const updates = {};
     if (req.body.name) updates.name = req.body.name;
     if (req.body.email) updates.email = req.body.email;
-    // Optionally handle password change
-    if (req.body.password) {
-      updates.password = await bcrypt.hash(req.body.password, 10);
-    }
+    // Password change is handled separately with OTP
     const admin = await Admin.findByIdAndUpdate(req.user.id, updates, { new: true, select: '-password' });
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
     res.json(admin);
   } catch (err) {
     res.status(500).json({ message: 'Failed to update admin profile' });
+  }
+});
+
+// Request password change OTP
+router.post('/request-password-change', adminAuth, async (req, res) => {
+  try {
+    console.log('=== Admin Password Change Request ===');
+    
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    
+    // Save OTP to admin record
+    admin.passwordChangeOtp = otp;
+    admin.passwordChangeOtpExpiry = otpExpiry;
+    await admin.save();
+    
+    // Send OTP to admin email
+    await sendPasswordResetEmail(
+      'digitalmistri33@gmail.com', // Fixed admin email
+      otp,
+      admin.name || 'Admin'
+    );
+    
+    console.log('Password change OTP sent to admin');
+    
+    res.json({ 
+      message: 'OTP sent to admin email successfully',
+      email: 'digitalmistri33@gmail.com'
+    });
+  } catch (err) {
+    console.error('Failed to send password change OTP:', err);
+    res.status(500).json({ message: 'Failed to send OTP' });
+  }
+});
+
+// Verify OTP and change password
+router.post('/change-password', adminAuth, async (req, res) => {
+  try {
+    console.log('=== Admin Password Change with OTP ===');
+    
+    const { otp, newPassword } = req.body;
+    
+    if (!otp || !newPassword) {
+      return res.status(400).json({ message: 'OTP and new password are required' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+    }
+    
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Check if OTP exists and is not expired
+    if (!admin.passwordChangeOtp || !admin.passwordChangeOtpExpiry) {
+      return res.status(400).json({ message: 'No OTP requested. Please request OTP first.' });
+    }
+    
+    if (new Date() > admin.passwordChangeOtpExpiry) {
+      return res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
+    }
+    
+    if (admin.passwordChangeOtp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP. Please check and try again.' });
+    }
+    
+    // Hash new password and update
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    admin.password = hashedPassword;
+    admin.passwordChangeOtp = undefined;
+    admin.passwordChangeOtpExpiry = undefined;
+    await admin.save();
+    
+    console.log('Admin password changed successfully');
+    
+    res.json({ message: 'Password changed successfully' });
+  } catch (err) {
+    console.error('Failed to change password:', err);
+    res.status(500).json({ message: 'Failed to change password' });
   }
 });
 
