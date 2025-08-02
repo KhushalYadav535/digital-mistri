@@ -108,7 +108,7 @@ app.use((req, res, next) => {
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'development' 
-    ? ['http://localhost:3000', 'http://192.168.1.43:3000', 'exp://192.168.1.43:19000']
+    ? ['http://localhost:3000', 'http://192.168.1.3:3000', 'exp://192.168.1.3:19000', 'http://192.168.1.43:3000', 'exp://192.168.1.43:19000']
     : 'https://digital-mistri.onrender.com',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -229,6 +229,16 @@ app.get('/health', (req, res) => {
 app.get('/api/test', (req, res) => {
   console.log('Test endpoint hit');
   res.json({ message: 'Backend is working!' });
+});
+
+// Root test endpoint
+app.get('/test', (req, res) => {
+  console.log('Root test endpoint hit');
+  res.json({ 
+    message: 'Backend is working!',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 // --- ROUTES ---
