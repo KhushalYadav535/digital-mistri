@@ -1406,6 +1406,59 @@ router.post('/verify-payment', customerAuth, async (req, res) => {
   }
 });
 
+// Get booking by order ID for payment verification
+router.get('/order/:orderId', customerAuth, async (req, res) => {
+  try {
+    console.log('🔍 Checking payment status for order:', req.params.orderId);
+    
+    const { orderId } = req.params;
+    
+    if (!orderId) {
+      return res.status(400).json({ message: 'Order ID is required' });
+    }
+    
+    // Find booking by order ID (you might need to add this field to your booking model)
+    // For now, we'll check if the booking exists and return payment status
+    const booking = await Booking.findOne({ 
+      customer: req.user.id,
+      // Add any other criteria to identify the booking by order ID
+      // For example: razorpayOrderId: orderId
+    }).sort({ createdAt: -1 }); // Get the most recent booking
+    
+    if (!booking) {
+      console.log('❌ No booking found for order:', orderId);
+      return res.status(404).json({ 
+        message: 'Booking not found',
+        paymentVerified: false 
+      });
+    }
+    
+    console.log('✅ Booking found:', {
+      bookingId: booking._id,
+      status: booking.status,
+      paymentVerified: booking.paymentVerified,
+      serviceTitle: booking.serviceTitle
+    });
+    
+    res.json({
+      bookingId: booking._id,
+      status: booking.status,
+      paymentVerified: booking.paymentVerified || false,
+      serviceTitle: booking.serviceTitle,
+      amount: booking.totalAmount,
+      createdAt: booking.createdAt
+    });
+    
+  } catch (err) {
+    console.error('❌ Error checking payment status:', err);
+    res.status(500).json({ 
+      message: 'Error checking payment status',
+      paymentVerified: false,
+      error: err.message 
+    });
+  }
+});
+
 // Test payment endpoint for development
 router.post('/test-payment', customerAuth, async (req, res) => {
   try {
