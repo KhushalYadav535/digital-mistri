@@ -10,6 +10,14 @@ const router = express.Router();
 // GET /api/admin/analytics/overview
 router.get('/overview', adminAuth, async (req, res) => {
   try {
+    // Calculate admin commission from completed bookings
+    const completedBookings = await Booking.find({ status: 'Completed' });
+    let totalAdminCommission = 0;
+    
+    completedBookings.forEach(booking => {
+      totalAdminCommission += booking.adminCommission || 0;
+    });
+
     // Revenue & job stats
     const workers = await Worker.find();
     let totalRevenue = 0;
@@ -73,7 +81,7 @@ router.get('/overview', adminAuth, async (req, res) => {
       totalWorkers: workers.length,
       activeJobs,
       totalEarnings: totalRevenue,
-      newRequests: 0 // Replace with actual new requests count if available
+      adminCommission: totalAdminCommission // Add admin commission
     });
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch analytics' });

@@ -153,14 +153,16 @@ router.post('/:id/complete', workerAuth, async (req, res) => {
     const worker = await Worker.findById(req.user.id);
     if (worker) {
       const jobAmount = job.details?.amount || 0;
-      worker.stats.totalEarnings = (worker.stats.totalEarnings || 0) + jobAmount;
+      // Calculate worker payment (80% of service amount)
+      const workerPayment = Math.round(jobAmount * 0.80);
+      worker.stats.totalEarnings = (worker.stats.totalEarnings || 0) + workerPayment;
       worker.stats.completedBookings = (worker.stats.completedBookings || 0) + 1;
       
       // Add new earnings entry
       worker.stats.earnings = worker.stats.earnings || [];
       worker.stats.earnings.push({
         date: new Date(),
-        amount: jobAmount
+        amount: workerPayment
       });
       
       await worker.save();

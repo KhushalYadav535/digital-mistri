@@ -67,7 +67,25 @@ router.get(['/profile', '/profile/'], workerAuth, async (req, res) => {
     ).length;
     const totalEarnings = allWorkerBookings
       .filter(booking => booking.status === 'Completed')
-      .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+      .reduce((sum, booking) => sum + (booking.workerPayment || booking.amount || 0), 0);
+    
+    // Calculate rating statistics
+    const ratedBookings = allWorkerBookings.filter(booking => 
+      booking.status === 'Completed' && booking.rating
+    );
+    const totalRatings = ratedBookings.length;
+    const averageRating = totalRatings > 0 
+      ? ratedBookings.reduce((sum, booking) => sum + (booking.rating || 0), 0) / totalRatings 
+      : 0;
+    
+    // Count ratings by star level
+    const ratingBreakdown = {
+      5: ratedBookings.filter(b => b.rating === 5).length,
+      4: ratedBookings.filter(b => b.rating === 4).length,
+      3: ratedBookings.filter(b => b.rating === 3).length,
+      2: ratedBookings.filter(b => b.rating === 2).length,
+      1: ratedBookings.filter(b => b.rating === 1).length
+    };
     
     res.json({
       id: worker._id,
@@ -79,7 +97,12 @@ router.get(['/profile', '/profile/'], workerAuth, async (req, res) => {
       completedBookings,
       totalEarnings,
       isVerified: worker.isVerified,
-      isAvailable: worker.isAvailable
+      isAvailable: worker.isAvailable,
+      ratings: {
+        totalRatings,
+        averageRating: Math.round(averageRating * 10) / 10, // Round to 1 decimal place
+        ratingBreakdown
+      }
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -164,7 +187,7 @@ router.get('/dashboard', workerAuth, async (req, res) => {
     // Calculate total earnings from completed bookings
     const totalEarnings = allWorkerBookings
       .filter(booking => booking.status === 'Completed')
-      .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+      .reduce((sum, booking) => sum + (booking.workerPayment || booking.amount || 0), 0);
     
     // Generate earnings array for the last 30 days
     const earnings = [];
@@ -180,7 +203,7 @@ router.get('/dashboard', workerAuth, async (req, res) => {
     const earningsByDate = {};
     completedBookingsInRange.forEach(booking => {
       const date = new Date(booking.updatedAt).toISOString().split('T')[0];
-      earningsByDate[date] = (earningsByDate[date] || 0) + (booking.amount || 0);
+      earningsByDate[date] = (earningsByDate[date] || 0) + (booking.workerPayment || booking.amount || 0);
     });
     
     // Convert to earnings array format
@@ -198,6 +221,24 @@ router.get('/dashboard', workerAuth, async (req, res) => {
       earningsCount: earnings.length
     });
     
+    // Calculate rating statistics
+    const ratedBookings = allWorkerBookings.filter(booking => 
+      booking.status === 'Completed' && booking.rating
+    );
+    const totalRatings = ratedBookings.length;
+    const averageRating = totalRatings > 0 
+      ? ratedBookings.reduce((sum, booking) => sum + (booking.rating || 0), 0) / totalRatings 
+      : 0;
+    
+    // Count ratings by star level
+    const ratingBreakdown = {
+      5: ratedBookings.filter(b => b.rating === 5).length,
+      4: ratedBookings.filter(b => b.rating === 4).length,
+      3: ratedBookings.filter(b => b.rating === 3).length,
+      2: ratedBookings.filter(b => b.rating === 2).length,
+      1: ratedBookings.filter(b => b.rating === 1).length
+    };
+    
     res.json({
       id: worker._id,
       name: worker.name,
@@ -208,7 +249,10 @@ router.get('/dashboard', workerAuth, async (req, res) => {
         totalBookings,
         completedBookings,
         totalEarnings,
-        earnings
+        earnings,
+        totalRatings,
+        averageRating: Math.round(averageRating * 10) / 10, // Round to 1 decimal place
+        ratingBreakdown
       },
       isVerified: worker.isVerified,
       isAvailable: worker.isAvailable,
@@ -557,7 +601,7 @@ router.post('/jobs/:id/complete', workerAuth, async (req, res) => {
       $inc: {
         'stats.totalBookings': 1,
         'stats.completedBookings': 1,
-        'stats.totalEarnings': booking.amount || 0
+        'stats.totalEarnings': booking.workerPayment || booking.amount || 0
       }
     });
     
@@ -693,18 +737,18 @@ router.get('/earnings', workerAuth, async (req, res) => {
     
     const dailyEarnings = completedBookings
       .filter(booking => new Date(booking.completedAt || booking.updatedAt) >= startOfDay)
-      .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+      .reduce((sum, booking) => sum + (booking.workerPayment || booking.amount || 0), 0);
     
     const weeklyEarnings = completedBookings
       .filter(booking => new Date(booking.completedAt || booking.updatedAt) >= startOfWeek)
-      .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+      .reduce((sum, booking) => sum + (booking.workerPayment || booking.amount || 0), 0);
     
     const monthlyEarnings = completedBookings
       .filter(booking => new Date(booking.completedAt || booking.updatedAt) >= startOfMonth)
-      .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+      .reduce((sum, booking) => sum + (booking.workerPayment || booking.amount || 0), 0);
     
     const totalEarnings = completedBookings
-      .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+      .reduce((sum, booking) => sum + (booking.workerPayment || booking.amount || 0), 0);
     
     res.json({
       daily: dailyEarnings,
@@ -716,6 +760,78 @@ router.get('/earnings', workerAuth, async (req, res) => {
   } catch (err) {
     console.error('Error fetching earnings:', err);
     res.status(500).json({ message: 'Failed to fetch earnings', error: err.message });
+  }
+});
+
+// GET /api/worker/ratings - Get worker's ratings and reviews
+router.get('/ratings', workerAuth, async (req, res) => {
+  try {
+    const worker = await Worker.findById(req.user.id);
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker not found' });
+    }
+    
+    // Get all completed bookings with ratings for this worker
+    const ratedBookings = await Booking.find({
+      worker: worker._id,
+      status: 'Completed',
+      rating: { $exists: true, $ne: null }
+    })
+    .populate('customer', 'name')
+    .sort({ completedAt: -1 });
+    
+    // Calculate rating statistics
+    const totalRatings = ratedBookings.length;
+    const averageRating = totalRatings > 0 
+      ? ratedBookings.reduce((sum, booking) => sum + (booking.rating || 0), 0) / totalRatings 
+      : 0;
+    
+    // Count ratings by star level
+    const ratingBreakdown = {
+      5: ratedBookings.filter(b => b.rating === 5).length,
+      4: ratedBookings.filter(b => b.rating === 4).length,
+      3: ratedBookings.filter(b => b.rating === 3).length,
+      2: ratedBookings.filter(b => b.rating === 2).length,
+      1: ratedBookings.filter(b => b.rating === 1).length
+    };
+    
+    // Get recent reviews (last 10)
+    const recentReviews = ratedBookings
+      .filter(booking => booking.review && booking.review.trim())
+      .slice(0, 10)
+      .map(booking => ({
+        id: booking._id,
+        rating: booking.rating,
+        review: booking.review,
+        serviceTitle: booking.serviceTitle,
+        customerName: booking.customer.name,
+        completedAt: booking.completedAt,
+        amount: booking.workerPayment || booking.amount
+      }));
+    
+    res.json({
+      workerId: worker._id,
+      workerName: worker.name,
+      stats: {
+        totalRatings,
+        averageRating: Math.round(averageRating * 10) / 10, // Round to 1 decimal place
+        ratingBreakdown,
+        reviewCount: recentReviews.length
+      },
+      recentReviews,
+      allRatings: ratedBookings.map(booking => ({
+        id: booking._id,
+        rating: booking.rating,
+        review: booking.review,
+        serviceTitle: booking.serviceTitle,
+        customerName: booking.customer.name,
+        completedAt: booking.completedAt,
+        amount: booking.workerPayment || booking.amount
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching worker ratings:', err);
+    res.status(500).json({ message: 'Failed to fetch ratings', error: err.message });
   }
 });
 

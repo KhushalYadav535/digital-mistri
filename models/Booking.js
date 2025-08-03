@@ -20,6 +20,9 @@ const BookingSchema = new mongoose.Schema({
   distance: { type: Number, default: 0 }, // Distance in kilometers
   distanceCharge: { type: Number, default: 0 }, // Distance charge in rupees
   totalAmount: { type: Number, required: true }, // Total amount including distance charge
+  // Admin commission and worker payment fields
+  adminCommission: { type: Number, default: 0 }, // 20% of service amount (not distance charge)
+  workerPayment: { type: Number, default: 0 }, // Service amount after admin commission deduction
   customerCoordinates: {
     latitude: { type: Number },
     longitude: { type: Number },

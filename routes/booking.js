@@ -9,6 +9,7 @@ import nodemailer from 'nodemailer';
 import { sendOtpEmail } from '../utils/emailConfig.js';
 import Job from '../models/Job.js'; // Ensure this is at the top
 import { calculateDistanceFromJanghaiBazar } from '../utils/distanceCalculator.js';
+import { calculateCommissionAndPayment, calculateMultipleServicesCommission } from '../utils/commissionCalculator.js';
 
 const router = express.Router();
 
@@ -160,10 +161,15 @@ router.post('/', customerAuth, async (req, res) => {
       }
     }
 
+    // Calculate admin commission and worker payment
+    const { adminCommission, workerPayment } = calculateCommissionAndPayment(finalAmount, distanceInfo.distanceCharge);
+    
     // Calculate total amount including distance charge
     const totalAmount = finalAmount + distanceInfo.distanceCharge;
     console.log('Amount breakdown:', {
       serviceAmount: finalAmount,
+      adminCommission: adminCommission,
+      workerPayment: workerPayment,
       distanceCharge: distanceInfo.distanceCharge,
       totalAmount: totalAmount
     });
@@ -178,6 +184,8 @@ router.post('/', customerAuth, async (req, res) => {
       address,
       phone,
       amount: finalAmount, // Service amount
+      adminCommission: adminCommission, // 20% of service amount
+      workerPayment: workerPayment, // Service amount after admin commission
       distance: distanceInfo.distance,
       distanceCharge: distanceInfo.distanceCharge,
       totalAmount: totalAmount, // Total amount including distance charge
@@ -323,7 +331,6 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
       gpsCoordinates
     } = req.body;
     const customerId = req.user.id;
-
     console.log('=== Validation Phase ===');
     console.log('Validating required fields...');
     if (!services || !Array.isArray(services) || services.length === 0) {
@@ -434,14 +441,15 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
       }
     }
 
-    // Calculate total amount for all services
-    const totalServiceAmount = services.reduce((sum, service) => sum + (service.amount * (service.quantity || 1)), 0);
-    const totalAmount = totalServiceAmount + distanceInfo.distanceCharge;
+    // Calculate admin commission and worker payments for multiple services
+    const commissionData = calculateMultipleServicesCommission(services, distanceInfo.distanceCharge);
     
     console.log('Amount breakdown:', {
-      totalServiceAmount,
+      totalServiceAmount: commissionData.totalServiceAmount,
+      totalAdminCommission: commissionData.totalAdminCommission,
+      totalWorkerPayment: commissionData.totalWorkerPayment,
       distanceCharge: distanceInfo.distanceCharge,
-      totalAmount: totalAmount
+      totalAmount: commissionData.totalAmount
     });
 
     // Create parent booking for multiple services
@@ -453,10 +461,12 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
       bookingTime,
       address,
       phone,
-      amount: totalServiceAmount,
+      amount: commissionData.totalServiceAmount,
+      adminCommission: commissionData.totalAdminCommission,
+      workerPayment: commissionData.totalWorkerPayment,
       distance: distanceInfo.distance,
       distanceCharge: distanceInfo.distanceCharge,
-      totalAmount: totalAmount,
+      totalAmount: commissionData.totalAmount,
       customerCoordinates: distanceInfo.customerCoordinates,
       status: 'Pending',
       isMultipleServiceBooking: true,
@@ -479,7 +489,11 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
       // Create individual bookings for each service
       for (const service of services) {
         const serviceAmount = service.amount * (service.quantity || 1);
-        const serviceTotalAmount = serviceAmount + (distanceInfo.distanceCharge / services.length); // Distribute distance charge
+        const serviceDistanceCharge = distanceInfo.distanceCharge / services.length; // Distribute distance charge
+        
+        // Calculate commission for this individual service
+        const { adminCommission, workerPayment } = calculateCommissionAndPayment(serviceAmount, serviceDistanceCharge);
+        const serviceTotalAmount = serviceAmount + serviceDistanceCharge;
 
         const childBookingData = {
           customer: customerId,
@@ -490,8 +504,10 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
           address,
           phone,
           amount: serviceAmount,
+          adminCommission: adminCommission,
+          workerPayment: workerPayment,
           distance: distanceInfo.distance,
-          distanceCharge: distanceInfo.distanceCharge / services.length, // Distribute distance charge
+          distanceCharge: serviceDistanceCharge, // Distribute distance charge
           totalAmount: serviceTotalAmount,
           customerCoordinates: distanceInfo.customerCoordinates,
           status: 'Pending',
@@ -966,11 +982,11 @@ router.put('/:id/status', async (req, res) => {
         const today = new Date().toISOString().split('T')[0];
         const existingEarningIndex = worker.stats.earnings.findIndex(e => e.date === today);
         if (existingEarningIndex >= 0) {
-          worker.stats.earnings[existingEarningIndex].amount += booking.amount || 0;
+          worker.stats.earnings[existingEarningIndex].amount += booking.workerPayment || booking.amount || 0;
         } else {
           worker.stats.earnings.push({
             date: today,
-            amount: booking.amount || 0
+            amount: booking.workerPayment || booking.amount || 0
           });
         }
         
@@ -1281,11 +1297,11 @@ router.put('/:id/verify-completion', workerAuth, async (req, res) => {
       const today = new Date().toISOString().split('T')[0];
       const existingEarningIndex = worker.stats.earnings.findIndex(e => e.date === today);
       if (existingEarningIndex >= 0) {
-        worker.stats.earnings[existingEarningIndex].amount += booking.amount || 0;
+        worker.stats.earnings[existingEarningIndex].amount += booking.workerPayment || booking.amount || 0;
       } else {
         worker.stats.earnings.push({
           date: today,
-          amount: booking.amount || 0
+          amount: booking.workerPayment || booking.amount || 0
         });
       }
       

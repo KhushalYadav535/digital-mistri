@@ -52,6 +52,39 @@ router.get('/prices', async (req, res) => {
   }
 });
 
+// Get all services with prices (public) - includes both static and dynamic services
+router.get('/all', async (req, res) => {
+  try {
+    // Get all service prices from database
+    const servicePrices = await ServicePrice.find({ isActive: true }).sort({ updatedAt: -1 });
+    
+    // Group services by serviceType
+    const servicesByType = {};
+    
+    servicePrices.forEach(servicePrice => {
+      if (!servicesByType[servicePrice.serviceType]) {
+        servicesByType[servicePrice.serviceType] = {
+          name: servicePrice.serviceType.charAt(0).toUpperCase() + servicePrice.serviceType.slice(1),
+          description: `Professional ${servicePrice.serviceType} services`,
+          services: []
+        };
+      }
+      
+      servicesByType[servicePrice.serviceType].services.push({
+        title: servicePrice.serviceTitle,
+        subtitle: servicePrice.serviceTitle,
+        price: `₹${servicePrice.price}`,
+        extra: 'Per piece + ₹10/km',
+        isDynamic: true // Flag to identify dynamically added services
+      });
+    });
+    
+    res.json(servicesByType);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch services', error: err.message });
+  }
+});
+
 // Get service by name/type (public)
 router.get('/:name', async (req, res) => {
   try {

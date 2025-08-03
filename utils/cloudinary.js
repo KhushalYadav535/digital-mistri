@@ -104,4 +104,30 @@ export const uploadAndOptimize = async (file) => {
   }
 };
 
+// Function to upload base64 image and return optimized URLs
+export const uploadBase64Image = async (base64Data) => {
+  try {
+    // Remove data URL prefix if present
+    const base64Image = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
+    
+    const result = await cloudinary.uploader.upload(`data:image/jpeg;base64,${base64Image}`, {
+      folder: 'digital-mistri',
+      transformation: [
+        { width: 1000, height: 1000, crop: 'limit' },
+        { quality: 'auto:good' },
+        { fetch_format: 'auto' }
+      ]
+    });
+
+    return {
+      publicId: result.public_id,
+      url: result.secure_url,
+      responsiveUrls: getResponsiveImageUrls(result.public_id)
+    };
+  } catch (error) {
+    console.error('Error uploading base64 image to Cloudinary:', error);
+    throw error;
+  }
+};
+
 export { cloudinary, storage, upload }; 

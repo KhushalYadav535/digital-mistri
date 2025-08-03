@@ -8,6 +8,7 @@ import ServicePrice from '../models/ServicePrice.js';
 import { adminAuth } from '../middleware/auth.js';
 import mongoose from 'mongoose';
 import { sendPasswordResetEmail } from '../utils/emailConfig.js';
+import Booking from '../models/Booking.js'; // Added import for Booking
 
 const router = express.Router();
 
@@ -338,6 +339,52 @@ router.put('/services/:id', adminAuth, async (req, res) => {
   }
 });
 
+// Add new service (admin)
+router.post('/services/add', adminAuth, async (req, res) => {
+  try {
+    const { serviceType, serviceName, serviceTitle, price, description } = req.body;
+
+    if (!serviceType || !serviceName || !serviceTitle || !price) {
+      return res.status(400).json({ message: 'Service type, name, title, and price are required' });
+    }
+
+    if (isNaN(price) || price <= 0) {
+      return res.status(400).json({ message: 'Valid price is required' });
+    }
+
+    // Check if service already exists
+    const existingService = await ServicePrice.findOne({ 
+      serviceType: serviceType.toLowerCase(), 
+      serviceTitle 
+    });
+
+    if (existingService) {
+      return res.status(400).json({ message: 'Service already exists' });
+    }
+
+    // Create new service price
+    const servicePrice = new ServicePrice({
+      serviceType: serviceType.toLowerCase(),
+      serviceTitle,
+      price: parseFloat(price),
+      updatedBy: req.user.id,
+      isActive: true
+    });
+
+    await servicePrice.save();
+
+    console.log('New service added:', { serviceType, serviceTitle, price });
+
+    res.json({
+      message: 'Service added successfully',
+      servicePrice
+    });
+  } catch (err) {
+    console.error('Failed to add service:', err);
+    res.status(500).json({ message: 'Failed to add service' });
+  }
+});
+
 // Update service price (admin)
 router.put('/services/price/:serviceType/:serviceTitle', adminAuth, async (req, res) => {
   try {
@@ -516,6 +563,160 @@ router.post('/change-password', adminAuth, async (req, res) => {
   } catch (err) {
     console.error('Failed to change password:', err);
     res.status(500).json({ message: 'Failed to change password' });
+  }
+});
+
+// GET /api/admin/worker-ratings - Get all worker ratings and reviews
+router.get('/worker-ratings', adminAuth, async (req, res) => {
+  try {
+    // Get all workers with their rating statistics
+    const workers = await Worker.find();
+    
+    const workersWithRatings = await Promise.all(
+      workers.map(async (worker) => {
+        // Get all completed bookings with ratings for this worker
+        const ratedBookings = await Booking.find({
+          worker: worker._id,
+          status: 'Completed',
+          rating: { $exists: true, $ne: null }
+        })
+        .populate('customer', 'name')
+        .sort({ completedAt: -1 });
+        
+        // Calculate rating statistics
+        const totalRatings = ratedBookings.length;
+        const averageRating = totalRatings > 0 
+          ? ratedBookings.reduce((sum, booking) => sum + (booking.rating || 0), 0) / totalRatings 
+          : 0;
+        
+        // Count ratings by star level
+        const ratingBreakdown = {
+          5: ratedBookings.filter(b => b.rating === 5).length,
+          4: ratedBookings.filter(b => b.rating === 4).length,
+          3: ratedBookings.filter(b => b.rating === 3).length,
+          2: ratedBookings.filter(b => b.rating === 2).length,
+          1: ratedBookings.filter(b => b.rating === 1).length
+        };
+        
+        // Get recent reviews (last 5)
+        const recentReviews = ratedBookings
+          .filter(booking => booking.review && booking.review.trim())
+          .slice(0, 5)
+          .map(booking => ({
+            id: booking._id,
+            rating: booking.rating,
+            review: booking.review,
+            serviceTitle: booking.serviceTitle,
+            customerName: booking.customer.name,
+            completedAt: booking.completedAt,
+            amount: booking.amount
+          }));
+        
+        return {
+          workerId: worker._id,
+          workerName: worker.name,
+          workerEmail: worker.email,
+          workerPhone: worker.phone,
+          isVerified: worker.isVerified,
+          isAvailable: worker.isAvailable,
+          services: worker.services,
+          stats: {
+            totalRatings,
+            averageRating: Math.round(averageRating * 10) / 10, // Round to 1 decimal place
+            ratingBreakdown,
+            reviewCount: recentReviews.length,
+            totalBookings: worker.stats?.totalBookings || 0,
+            completedBookings: worker.stats?.completedBookings || 0,
+            totalEarnings: worker.stats?.totalEarnings || 0
+          },
+          recentReviews,
+          allRatings: ratedBookings.map(booking => ({
+            id: booking._id,
+            rating: booking.rating,
+            review: booking.review,
+            serviceTitle: booking.serviceTitle,
+            customerName: booking.customer.name,
+            completedAt: booking.completedAt,
+            amount: booking.amount
+          }))
+        };
+      })
+    );
+    
+    // Sort by average rating (highest first)
+    workersWithRatings.sort((a, b) => b.stats.averageRating - a.stats.averageRating);
+    
+    res.json({
+      totalWorkers: workersWithRatings.length,
+      workers: workersWithRatings
+    });
+  } catch (err) {
+    console.error('Error fetching worker ratings:', err);
+    res.status(500).json({ message: 'Failed to fetch worker ratings', error: err.message });
+  }
+});
+
+// GET /api/admin/worker-ratings/:workerId - Get specific worker's ratings
+router.get('/worker-ratings/:workerId', adminAuth, async (req, res) => {
+  try {
+    const worker = await Worker.findById(req.params.workerId);
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker not found' });
+    }
+    
+    // Get all completed bookings with ratings for this worker
+    const ratedBookings = await Booking.find({
+      worker: worker._id,
+      status: 'Completed',
+      rating: { $exists: true, $ne: null }
+    })
+    .populate('customer', 'name')
+    .sort({ completedAt: -1 });
+    
+    // Calculate rating statistics
+    const totalRatings = ratedBookings.length;
+    const averageRating = totalRatings > 0 
+      ? ratedBookings.reduce((sum, booking) => sum + (booking.rating || 0), 0) / totalRatings 
+      : 0;
+    
+    // Count ratings by star level
+    const ratingBreakdown = {
+      5: ratedBookings.filter(b => b.rating === 5).length,
+      4: ratedBookings.filter(b => b.rating === 4).length,
+      3: ratedBookings.filter(b => b.rating === 3).length,
+      2: ratedBookings.filter(b => b.rating === 2).length,
+      1: ratedBookings.filter(b => b.rating === 1).length
+    };
+    
+    res.json({
+      workerId: worker._id,
+      workerName: worker.name,
+      workerEmail: worker.email,
+      workerPhone: worker.phone,
+      isVerified: worker.isVerified,
+      isAvailable: worker.isAvailable,
+      services: worker.services,
+      stats: {
+        totalRatings,
+        averageRating: Math.round(averageRating * 10) / 10,
+        ratingBreakdown,
+        totalBookings: worker.stats?.totalBookings || 0,
+        completedBookings: worker.stats?.completedBookings || 0,
+        totalEarnings: worker.stats?.totalEarnings || 0
+      },
+      allRatings: ratedBookings.map(booking => ({
+        id: booking._id,
+        rating: booking.rating,
+        review: booking.review,
+        serviceTitle: booking.serviceTitle,
+        customerName: booking.customer.name,
+        completedAt: booking.completedAt,
+        amount: booking.amount
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching worker ratings:', err);
+    res.status(500).json({ message: 'Failed to fetch worker ratings', error: err.message });
   }
 });
 

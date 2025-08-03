@@ -4,6 +4,7 @@ import { adminAuth } from '../middleware/auth.js';
 import { admin } from '../middleware/admin.js';
 import { customerAuth } from '../middleware/auth.js';
 import { upload } from '../utils/cloudinary.js';
+import { uploadBase64Image } from '../utils/cloudinary.js';
 import PendingShop from '../models/PendingShop.js';
 
 const router = express.Router();
@@ -240,6 +241,90 @@ router.post('/customer', [customerAuth, upload.single('image')], async (req, res
     res.status(201).json(shop);
   } catch (err) {
     console.error('Error creating nearby shop (customer):', err);
+    res.status(500).json({ message: 'Failed to create nearby shop', error: err.message });
+  }
+});
+
+// Customer: Create a new nearby shop with base64 image (for payment success flow)
+router.post('/customer-with-image', customerAuth, async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      phone,
+      email,
+      image, // base64 image data
+      address,
+      location,
+      services,
+      workingHours
+    } = req.body;
+
+    // Validate address fields
+    if (!address || !address.street || !address.city || !address.state || !address.pincode) {
+      return res.status(400).json({
+        message: 'Invalid address. Please provide street, city, state, and pincode'
+      });
+    }
+
+    // Validate location coordinates
+    if (!location || !location.coordinates || 
+        !Array.isArray(location.coordinates) || 
+        location.coordinates.length !== 2 ||
+        isNaN(parseFloat(location.coordinates[0])) ||
+        isNaN(parseFloat(location.coordinates[1]))) {
+      return res.status(400).json({ 
+        message: 'Invalid location coordinates. Must provide [longitude, latitude] as numbers' 
+      });
+    }
+
+    let images = [];
+    if (image) {
+      try {
+        // Upload base64 image to Cloudinary
+        const uploadResult = await uploadBase64Image(image);
+        images.push(uploadResult.url);
+        console.log('✅ Image uploaded successfully:', uploadResult.url);
+      } catch (uploadError) {
+        console.error('❌ Failed to upload image:', uploadError);
+        return res.status(500).json({ 
+          message: 'Failed to upload shop image', 
+          error: uploadError.message 
+        });
+      }
+    }
+
+    const shop = await NearbyShop.create({
+      name,
+      description,
+      address,
+      location: {
+        type: 'Point',
+        coordinates: [
+          parseFloat(location.coordinates[0]),
+          parseFloat(location.coordinates[1])
+        ]
+      },
+      phone,
+      email,
+      services: services || [],
+      workingHours: workingHours || {
+        monday: { open: '09:00', close: '18:00' },
+        tuesday: { open: '09:00', close: '18:00' },
+        wednesday: { open: '09:00', close: '18:00' },
+        thursday: { open: '09:00', close: '18:00' },
+        friday: { open: '09:00', close: '18:00' },
+        saturday: { open: '09:00', close: '18:00' },
+        sunday: { open: '09:00', close: '18:00' }
+      },
+      images,
+      isActive: true // auto-approved
+    });
+
+    console.log('✅ Shop created successfully after payment:', shop._id);
+    res.status(201).json(shop);
+  } catch (err) {
+    console.error('Error creating nearby shop with image (customer):', err);
     res.status(500).json({ message: 'Failed to create nearby shop', error: err.message });
   }
 });
