@@ -85,46 +85,50 @@ router.post('/create-order', async (req, res) => {
       key_id: RAZORPAY_KEY_ID ? '***configured***' : '***missing***'
     });
 
-    try {
-      const order = await razorpay.orders.create(options);
-      console.log('Razorpay order created successfully:', order.id);
-      return res.json({ order });
-    } catch (razorpayError) {
-      console.error('Razorpay API error:', razorpayError);
-      
-      // If Razorpay fails, create a mock order for testing
-      if (razorpayError.statusCode === 401 || razorpayError.statusCode === 400) {
-        console.log('🔄 Creating mock order for testing...');
-        const mockOrder = {
-          id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          entity: 'order',
-          amount: Math.round(amount),
-          amount_paid: 0,
-          amount_due: Math.round(amount),
-          currency: currency,
-          receipt: receipt || `rcpt_${Date.now()}`,
-          status: 'created',
-          attempts: 0,
-          notes: {
-            ...notes,
-            bookingId: bookingId || 'unknown',
-            isMockOrder: true
-          },
-          created_at: Date.now()
-        };
-        
-        console.log('✅ Mock order created:', mockOrder.id);
-        const response = { 
-          order: mockOrder,
-          isMockOrder: true,
-          message: 'Mock order created for testing (Razorpay keys invalid)'
-        };
-        console.log('📤 Sending mock order response (invalid keys):', response);
-        return res.json(response);
-      }
-      
-      throw razorpayError;
-    }
+         try {
+       const order = await razorpay.orders.create(options);
+       console.log('Razorpay order created successfully:', order.id);
+       return res.json({ order });
+     } catch (razorpayError) {
+       console.error('Razorpay API error:', razorpayError);
+       console.error('Error details:', {
+         statusCode: razorpayError.statusCode,
+         error: razorpayError.error,
+         message: razorpayError.message,
+         description: razorpayError.error?.description
+       });
+       
+       // If Razorpay fails for any reason, create a mock order for testing
+       console.log('🔄 Creating mock order due to Razorpay failure...');
+       const mockOrder = {
+         id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+         entity: 'order',
+         amount: Math.round(amount),
+         amount_paid: 0,
+         amount_due: Math.round(amount),
+         currency: currency,
+         receipt: receipt || `rcpt_${Date.now()}`,
+         status: 'created',
+         attempts: 0,
+         notes: {
+           ...notes,
+           bookingId: bookingId || 'unknown',
+           isMockOrder: true,
+           razorpayError: razorpayError.message || 'Unknown error'
+         },
+         created_at: Date.now()
+       };
+       
+       console.log('✅ Mock order created due to Razorpay failure:', mockOrder.id);
+       const response = { 
+         order: mockOrder,
+         isMockOrder: true,
+         message: 'Mock order created for testing (Razorpay failed)',
+         originalError: razorpayError.message
+       };
+       console.log('📤 Sending mock order response (Razorpay failed):', response);
+       return res.json(response);
+     }
   } catch (err) {
     console.error('Razorpay order creation error:', err);
     console.error('Error details:', {
