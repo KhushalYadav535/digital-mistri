@@ -12,9 +12,15 @@ const router = express.Router();
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
+// Check if we're in development mode
+const isDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
+
 if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
   console.warn('⚠️  Razorpay keys not configured. Payment functionality will be limited.');
   console.warn('Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET environment variables.');
+  if (isDevelopment) {
+    console.log('🔄 Development mode: Will create mock orders for testing');
+  }
 }
 
 const razorpay = RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET 
@@ -37,11 +43,39 @@ router.post('/create-order', async (req, res) => {
 
     // Check if Razorpay is configured
     if (!razorpay) {
-      console.error('Razorpay not configured - missing API keys');
-      return res.status(500).json({ 
-        message: 'Payment service not configured. Please contact support.',
-        error: 'RAZORPAY_NOT_CONFIGURED'
-      });
+      if (isDevelopment) {
+        console.log('🔄 Development mode: Creating mock order due to missing Razorpay keys');
+        const mockOrder = {
+          id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          entity: 'order',
+          amount: Math.round(amount),
+          amount_paid: 0,
+          amount_due: Math.round(amount),
+          currency: currency,
+          receipt: receipt || `rcpt_${Date.now()}`,
+          status: 'created',
+          attempts: 0,
+          notes: {
+            ...notes,
+            bookingId: bookingId || 'unknown',
+            isMockOrder: true
+          },
+          created_at: Date.now()
+        };
+        
+        console.log('✅ Mock order created for development:', mockOrder.id);
+        return res.json({ 
+          order: mockOrder,
+          isMockOrder: true,
+          message: 'Mock order created for development (Razorpay keys not configured)'
+        });
+      } else {
+        console.error('Razorpay not configured - missing API keys');
+        return res.status(500).json({ 
+          message: 'Payment service not configured. Please contact support.',
+          error: 'RAZORPAY_NOT_CONFIGURED'
+        });
+      }
     }
 
     console.log('🔑 Razorpay configuration check:', {
