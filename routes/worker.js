@@ -576,66 +576,10 @@ router.post('/jobs/:id/start', workerAuth, async (req, res) => {
   }
 });
 
-// POST /api/worker/jobs/:id/complete - Complete a job (standardized endpoint)
-router.post('/jobs/:id/complete', workerAuth, async (req, res) => {
-  try {
-    const workerId = req.user.id;
-    const bookingId = req.params.id;
-    
-    const booking = await Booking.findOne({ 
-      _id: bookingId, 
-      worker: workerId,
-      status: 'In Progress'
-    });
-    
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found or not in progress' });
-    }
-    
-    booking.status = 'Completed';
-    booking.completedAt = new Date();
-    await booking.save();
-    
-    // Update worker stats
-    await Worker.findByIdAndUpdate(workerId, {
-      $inc: {
-        'stats.totalBookings': 1,
-        'stats.completedBookings': 1,
-        'stats.totalEarnings': booking.workerPayment || booking.amount || 0
-      }
-    });
-    
-    // Create notification for customer
-    await Notification.create({
-      type: 'job_completed',
-      user: booking.customer,
-      userModel: 'Customer',
-      title: 'Job Completed',
-      message: `Your service for ${booking.serviceTitle} has been completed`,
-      data: { bookingId: booking._id.toString() },
-      read: false
-    });
-    
-    // Send real-time notification to customer
-    sendRealTimeNotification(booking.customer, {
-      type: 'job_completed',
-      message: `Your service for ${booking.serviceTitle} has been completed`,
-      data: { bookingId: booking._id.toString() }
-    });
-    
-    // Send real-time notification to worker
-    sendRealTimeNotification(workerId, {
-      type: 'job_completed',
-      message: 'Job completed successfully',
-      data: { bookingId: booking._id.toString() }
-    });
-    
-    res.json({ message: 'Job completed successfully', booking });
-  } catch (err) {
-    console.error('Error completing job:', err);
-    res.status(500).json({ message: 'Failed to complete job', error: err.message });
-  }
-});
+// POST /api/worker/jobs/:id/complete - Complete a job - REMOVED: Use OTP-based completion instead
+// This endpoint has been removed for security reasons.
+// Workers must now use the OTP verification system to complete jobs.
+// See /api/bookings/:id/request-completion and /api/bookings/:id/verify-completion
 
 // POST /api/worker/jobs/:id/cancel - Cancel a job (standardized endpoint)
 router.post('/jobs/:id/cancel', workerAuth, async (req, res) => {

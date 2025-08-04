@@ -173,6 +173,93 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   res.json({ status: 'ok' });
 });
 
+// Create booking after successful payment
+router.post('/create-booking-after-payment', async (req, res) => {
+  try {
+    const { orderId, paymentId, bookingData, isMultipleService } = req.body;
+    
+    console.log('💰 Creating booking after successful payment:', { orderId, paymentId, isMultipleService });
+    
+    if (!bookingData) {
+      return res.status(400).json({ message: 'Booking data is required' });
+    }
+
+    let bookingResponse;
+    
+    if (isMultipleService) {
+      // Create multiple services booking
+      console.log('Creating multiple services booking after payment...');
+      const response = await fetch(`${req.protocol}://${req.get('host')}/api/bookings/multiple-services`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': req.headers.authorization
+        },
+        body: JSON.stringify({
+          services: bookingData.services,
+          bookingDate: bookingData.date,
+          bookingTime: bookingData.time,
+          address: bookingData.address,
+          phone: bookingData.phone,
+          gpsCoordinates: bookingData.gpsCoordinates,
+          paymentId: paymentId,
+          orderId: orderId
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create multiple services booking');
+      }
+
+      bookingResponse = await response.json();
+      console.log('Multiple services booking created after payment:', bookingResponse);
+    } else {
+      // Create single service booking
+      console.log('Creating single service booking after payment...');
+      const response = await fetch(`${req.protocol}://${req.get('host')}/api/bookings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': req.headers.authorization
+        },
+        body: JSON.stringify({
+          serviceType: bookingData.serviceId,
+          serviceTitle: bookingData.serviceTitle,
+          bookingDate: bookingData.date,
+          bookingTime: bookingData.time,
+          address: bookingData.address,
+          phone: bookingData.phone,
+          amount: bookingData.amount,
+          gpsCoordinates: bookingData.gpsCoordinates,
+          paymentId: paymentId,
+          orderId: orderId
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create booking');
+      }
+
+      bookingResponse = await response.json();
+      console.log('Single service booking created after payment:', bookingResponse);
+    }
+
+    res.json({
+      success: true,
+      booking: bookingResponse,
+      message: 'Booking created successfully after payment'
+    });
+  } catch (err) {
+    console.error('Error creating booking after payment:', err);
+    res.status(500).json({ 
+      message: 'Failed to create booking after payment',
+      error: err.message 
+    });
+  }
+});
+
 // Test route to confirm payment route is working
 router.get('/test', (req, res) => {
   res.json({ 

@@ -190,7 +190,11 @@ router.post('/', customerAuth, async (req, res) => {
       distanceCharge: distanceInfo.distanceCharge,
       totalAmount: totalAmount, // Total amount including distance charge
       customerCoordinates: distanceInfo.customerCoordinates,
-      status: 'Pending'
+      status: 'Pending',
+      // Payment information (if provided)
+      paymentVerified: req.body.paymentId ? true : false,
+      paidAmount: req.body.paymentId ? totalAmount : 0,
+      paymentVerifiedAt: req.body.paymentId ? new Date() : null
     };
 
     try {
@@ -475,7 +479,11 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
         serviceTitle: service.serviceTitle,
         amount: service.amount,
         quantity: service.quantity || 1
-      }))
+      })),
+      // Payment information (if provided)
+      paymentVerified: req.body.paymentId ? true : false,
+      paidAmount: req.body.paymentId ? commissionData.totalAmount : 0,
+      paymentVerifiedAt: req.body.paymentId ? new Date() : null
     };
 
     try {
@@ -512,7 +520,11 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
           customerCoordinates: distanceInfo.customerCoordinates,
           status: 'Pending',
           parentBooking: parentBooking._id,
-          isMultipleServiceBooking: false
+          isMultipleServiceBooking: false,
+          // Payment information (if provided)
+          paymentVerified: req.body.paymentId ? true : false,
+          paidAmount: req.body.paymentId ? serviceTotalAmount : 0,
+          paymentVerifiedAt: req.body.paymentId ? new Date() : null
         };
 
         const childBooking = await Booking.create(childBookingData);
