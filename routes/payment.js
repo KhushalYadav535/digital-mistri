@@ -3,6 +3,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import Booking from '../models/Booking.js';
 import dotenv from 'dotenv';
+import { customerAuth } from '../middleware/auth.js';
 dotenv.config();
 
 const router = express.Router();
@@ -174,7 +175,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 });
 
 // Create booking after successful payment
-router.post('/create-booking-after-payment', async (req, res) => {
+router.post('/create-booking-after-payment', customerAuth, async (req, res) => {
   try {
     const { orderId, paymentId, bookingData, isMultipleService } = req.body;
     
@@ -184,65 +185,257 @@ router.post('/create-booking-after-payment', async (req, res) => {
       return res.status(400).json({ message: 'Booking data is required' });
     }
 
+    // Import required modules
+    const Booking = (await import('../models/Booking.js')).default;
+    const Worker = (await import('../models/Worker.js')).default;
+    const Notification = (await import('../models/Notification.js')).default;
+    const Job = (await import('../models/Job.js')).default;
+    const { calculateCommissionAndPayment } = await import('../utils/commissionCalculator.js');
+    const { calculateDistanceFromJanghaiBazar } = await import('../utils/distanceCalculator.js');
+    const { sendRealTimeNotification } = await import('../utils/notifications.js');
+
     let bookingResponse;
     
     if (isMultipleService) {
-      // Create multiple services booking
+      // Create multiple services booking directly
       console.log('Creating multiple services booking after payment...');
-      const response = await fetch(`${req.protocol}://${req.get('host')}/api/bookings/multiple-services`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': req.headers.authorization
-        },
-        body: JSON.stringify({
-          services: bookingData.services,
-          bookingDate: bookingData.date,
-          bookingTime: bookingData.time,
-          address: bookingData.address,
-          phone: bookingData.phone,
-          gpsCoordinates: bookingData.gpsCoordinates,
-          paymentId: paymentId,
-          orderId: orderId
-        })
+      
+      const { services, bookingDate, bookingTime, address, phone, gpsCoordinates } = bookingData;
+      const customerId = req.user.id; // Get from auth middleware
+
+      // Calculate distance and charges
+      const distanceInfo = await calculateDistanceFromJanghaiBazar(address);
+      
+      // Calculate commission for all services
+      const commissionData = {
+        totalServiceAmount: 0,
+        totalAdminCommission: 0,
+        totalWorkerPayment: 0,
+        totalAmount: 0
+      };
+
+      services.forEach(service => {
+        const serviceAmount = service.amount * (service.quantity || 1);
+        const { adminCommission, workerPayment } = calculateCommissionAndPayment(serviceAmount, 0);
+        commissionData.totalServiceAmount += serviceAmount;
+        commissionData.totalAdminCommission += adminCommission;
+        commissionData.totalWorkerPayment += workerPayment;
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create multiple services booking');
+      commissionData.totalAmount = commissionData.totalServiceAmount + distanceInfo.distanceCharge;
+
+      // Create parent booking
+      const parentBookingData = {
+        customer: customerId,
+        serviceType: 'Multiple',
+        serviceTitle: `Multiple Services (${services.length} items)`,
+        bookingDate: new Date(bookingDate),
+        bookingTime,
+        address,
+        phone,
+        amount: commissionData.totalServiceAmount,
+        adminCommission: commissionData.totalAdminCommission,
+        workerPayment: commissionData.totalWorkerPayment,
+        distance: distanceInfo.distance,
+        distanceCharge: distanceInfo.distanceCharge,
+        totalAmount: commissionData.totalAmount,
+        customerCoordinates: distanceInfo.customerCoordinates,
+        status: 'Pending',
+        isMultipleServiceBooking: true,
+        serviceBreakdown: services.map(service => ({
+          serviceType: service.serviceType,
+          serviceTitle: service.serviceTitle,
+          amount: service.amount,
+          quantity: service.quantity || 1
+        })),
+        paymentVerified: true,
+        paidAmount: commissionData.totalAmount,
+        paymentVerifiedAt: new Date()
+      };
+
+      const parentBooking = await Booking.create(parentBookingData);
+      console.log('Parent booking created successfully:', parentBooking._id);
+
+      // Create child bookings
+      const childBookings = [];
+      for (const service of services) {
+        const serviceAmount = service.amount * (service.quantity || 1);
+        const serviceDistanceCharge = distanceInfo.distanceCharge / services.length;
+        const { adminCommission, workerPayment } = calculateCommissionAndPayment(serviceAmount, serviceDistanceCharge);
+        const serviceTotalAmount = serviceAmount + serviceDistanceCharge;
+
+        const childBookingData = {
+          customer: customerId,
+          serviceType: service.serviceType,
+          serviceTitle: service.serviceTitle,
+          bookingDate: new Date(bookingDate),
+          bookingTime,
+          address,
+          phone,
+          amount: serviceAmount,
+          adminCommission,
+          workerPayment,
+          distance: distanceInfo.distance,
+          distanceCharge: serviceDistanceCharge,
+          totalAmount: serviceTotalAmount,
+          customerCoordinates: distanceInfo.customerCoordinates,
+          status: 'Pending',
+          parentBooking: parentBooking._id,
+          isMultipleServiceBooking: false,
+          paymentVerified: true,
+          paidAmount: serviceTotalAmount,
+          paymentVerifiedAt: new Date()
+        };
+
+        const childBooking = await Booking.create(childBookingData);
+        childBookings.push(childBooking._id);
+
+        // Find and notify workers
+        const availableWorkers = await Worker.find({
+          services: service.serviceType,
+          isVerified: true,
+          isAvailable: true
+        });
+
+        for (const worker of availableWorkers) {
+          await Notification.create({
+            type: 'new_booking_available',
+            user: worker._id,
+            userModel: 'Worker',
+            title: 'New Booking Available',
+            message: `A new booking is available for ${service.serviceTitle}`,
+            data: { 
+              bookingId: childBooking._id.toString(),
+              parentBookingId: parentBooking._id.toString(),
+              isMultipleService: true
+            },
+            read: false
+          });
+
+          sendRealTimeNotification(worker._id, {
+            type: 'new_booking_available',
+            message: `New booking available for service: ${service.serviceTitle}`,
+            bookingId: childBooking._id.toString()
+          });
+        }
+
+        // Create job entry
+        await Job.create({
+          service: service.serviceType,
+          customer: customerId,
+          candidateWorkers: availableWorkers.map(w => w._id),
+          details: {
+            amount: serviceAmount,
+            totalAmount: serviceTotalAmount,
+            distance: distanceInfo.distance,
+            distanceCharge: serviceDistanceCharge,
+            date: bookingDate,
+            time: bookingTime,
+            address,
+            phone,
+            serviceTitle: service.serviceTitle
+          },
+          status: 'Pending',
+          booking: childBooking._id
+        });
       }
 
-      bookingResponse = await response.json();
+      // Update parent booking with child bookings
+      await Booking.findByIdAndUpdate(parentBooking._id, {
+        childBookings: childBookings
+      });
+
+      bookingResponse = {
+        parentBooking: parentBooking,
+        childBookings: childBookings
+      };
       console.log('Multiple services booking created after payment:', bookingResponse);
     } else {
-      // Create single service booking
+      // Create single service booking directly
       console.log('Creating single service booking after payment...');
-      const response = await fetch(`${req.protocol}://${req.get('host')}/api/bookings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': req.headers.authorization
-        },
-        body: JSON.stringify({
-          serviceType: bookingData.serviceId,
-          serviceTitle: bookingData.serviceTitle,
-          bookingDate: bookingData.date,
-          bookingTime: bookingData.time,
-          address: bookingData.address,
-          phone: bookingData.phone,
-          amount: bookingData.amount,
-          gpsCoordinates: bookingData.gpsCoordinates,
-          paymentId: paymentId,
-          orderId: orderId
-        })
+      
+      const { serviceId, serviceTitle, date, time, address, phone, amount, gpsCoordinates } = bookingData;
+      const customerId = req.user.id;
+
+      // Calculate distance and charges
+      const distanceInfo = await calculateDistanceFromJanghaiBazar(address);
+      
+      // Calculate commission and payment
+      const { adminCommission, workerPayment } = calculateCommissionAndPayment(amount, distanceInfo.distanceCharge);
+      const totalAmount = amount + distanceInfo.distanceCharge;
+
+      // Create booking
+      const bookingDataToSave = {
+        customer: customerId,
+        serviceType: serviceId,
+        serviceTitle,
+        bookingDate: new Date(date),
+        bookingTime: time,
+        address,
+        phone,
+        amount,
+        adminCommission,
+        workerPayment,
+        distance: distanceInfo.distance,
+        distanceCharge: distanceInfo.distanceCharge,
+        totalAmount,
+        customerCoordinates: distanceInfo.customerCoordinates,
+        status: 'Pending',
+        paymentVerified: true,
+        paidAmount: totalAmount,
+        paymentVerifiedAt: new Date()
+      };
+
+      const booking = await Booking.create(bookingDataToSave);
+      console.log('Single service booking created after payment:', booking._id);
+
+      // Find available workers
+      const availableWorkers = await Worker.find({
+        services: serviceId,
+        isVerified: true,
+        isAvailable: true
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create booking');
-      }
+      // Notify workers
+      await Promise.all(availableWorkers.map(async worker => {
+        await Notification.create({
+          type: 'new_booking_available',
+          user: worker._id,
+          userModel: 'Worker',
+          title: 'New Booking Available',
+          message: `A new booking is available for ${serviceTitle}`,
+          data: { bookingId: booking._id.toString() },
+          read: false
+        });
 
-      bookingResponse = await response.json();
+        sendRealTimeNotification(worker._id, {
+          type: 'new_booking_available',
+          message: `New booking available for service: ${serviceTitle}`,
+          bookingId: booking._id.toString()
+        });
+      }));
+
+      // Create job entry
+      await Job.create({
+        service: serviceId,
+        customer: customerId,
+        candidateWorkers: availableWorkers.map(w => w._id),
+        details: {
+          amount,
+          totalAmount,
+          distance: distanceInfo.distance,
+          distanceCharge: distanceInfo.distanceCharge,
+          date,
+          time,
+          address,
+          phone,
+          serviceTitle
+        },
+        status: 'Pending',
+        booking: booking._id
+      });
+
+      bookingResponse = booking;
       console.log('Single service booking created after payment:', bookingResponse);
     }
 
