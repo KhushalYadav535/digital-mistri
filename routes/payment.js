@@ -44,6 +44,17 @@ router.post('/create-order', async (req, res) => {
     
     console.log('💰 Payment order request:', { amount, currency, bookingId });
     
+    // Check if this is a shop payment
+    const isShopPayment = notes?.customFlow === 'addNearbyShop';
+    if (isShopPayment) {
+      console.log('🏪 Shop payment detected:', {
+        amount,
+        currency,
+        customFlow: notes.customFlow,
+        shopData: notes.shopData ? 'present' : 'missing'
+      });
+    }
+    
     if (!amount) {
       return res.status(400).json({ message: 'Amount is required' });
     }
@@ -88,7 +99,29 @@ router.post('/create-order', async (req, res) => {
          try {
        const order = await razorpay.orders.create(options);
        console.log('Razorpay order created successfully:', order.id);
-       return res.json({ order });
+       
+               if (isShopPayment) {
+          console.log('🏪 Shop payment order created:', {
+            orderId: order.id,
+            amount: order.amount,
+            currency: order.currency,
+            status: order.status,
+            receipt: order.receipt,
+            notes: order.notes
+          });
+        }
+       
+               const response = { order };
+        
+        if (isShopPayment) {
+          console.log('🏪 Shop payment response being sent:', {
+            orderId: response.order.id,
+            orderExists: !!response.order,
+            orderKeys: Object.keys(response.order)
+          });
+        }
+        
+        return res.json(response);
      } catch (razorpayError) {
        console.error('Razorpay API error:', razorpayError);
        console.error('Error details:', {
@@ -120,6 +153,15 @@ router.post('/create-order', async (req, res) => {
        };
        
        console.log('✅ Mock order created due to Razorpay failure:', mockOrder.id);
+       
+       if (isShopPayment) {
+         console.log('🏪 Shop payment mock order created:', {
+           orderId: mockOrder.id,
+           amount: mockOrder.amount,
+           isMockOrder: true
+         });
+       }
+       
        const response = { 
          order: mockOrder,
          isMockOrder: true,
