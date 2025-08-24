@@ -779,5 +779,114 @@ router.get('/ratings', workerAuth, async (req, res) => {
   }
 });
 
+// POST /api/worker/bookings/:id/collect-cash-payment - Collect cash on delivery payment
+router.post('/bookings/:id/collect-cash-payment', workerAuth, async (req, res) => {
+  try {
+    console.log('💵 Cash payment collection request received');
+    const { collectedAmount } = req.body;
+    const bookingId = req.params.id;
+    const workerId = req.user.id;
+
+    if (!collectedAmount || collectedAmount <= 0) {
+      return res.status(400).json({ message: 'Valid collected amount is required' });
+    }
+
+    // Find the booking and ensure it's assigned to this worker
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      worker: workerId,
+      paymentMethod: 'cash_on_delivery',
+      status: { $in: ['Worker Assigned', 'Accepted', 'In Progress'] }
+    });
+
+    if (!booking) {
+      return res.status(404).json({ 
+        message: 'Booking not found, not assigned to you, or not a cash on delivery booking' 
+      });
+    }
+
+    // Validate collected amount
+    if (collectedAmount !== booking.totalAmount) {
+      return res.status(400).json({ 
+        message: `Payment amount mismatch. Expected: ₹${booking.totalAmount}, Collected: ₹${collectedAmount}`,
+        expectedAmount: booking.totalAmount,
+        collectedAmount: collectedAmount
+      });
+    }
+
+    // Update booking with payment verification
+    booking.paymentVerified = true;
+    booking.paidAmount = collectedAmount;
+    booking.paymentVerifiedAt = new Date();
+    await booking.save();
+
+    console.log('✅ Cash payment collected successfully:', {
+      bookingId: booking._id,
+      collectedAmount,
+      workerId
+    });
+
+    // Create notification for customer
+    await Notification.create({
+      type: 'payment_collected',
+      user: booking.customer,
+      userModel: 'Customer',
+      title: 'Payment Collected',
+      message: `Cash payment of ₹${collectedAmount} has been collected for your ${booking.serviceTitle} booking`,
+      data: { bookingId: booking._id.toString() },
+      read: false
+    });
+
+    // Create notification for admin
+    const Admin = await import('../models/Admin.js').then(mod => mod.default);
+    const admins = await Admin.find();
+    await Promise.all(admins.map(admin => 
+      Notification.create({
+        type: 'payment_collected',
+        user: admin._id,
+        userModel: 'Admin',
+        title: 'Cash Payment Collected',
+        message: `Cash payment of ₹${collectedAmount} collected for ${booking.serviceTitle}`,
+        data: { bookingId: booking._id.toString() },
+        read: false
+      })
+    ));
+
+    // Send real-time notification to customer
+    sendRealTimeNotification(booking.customer, {
+      type: 'payment_collected',
+      message: `Cash payment of ₹${collectedAmount} has been collected`,
+      data: { bookingId: booking._id.toString() }
+    });
+
+    // Send real-time notification to worker
+    sendRealTimeNotification(workerId, {
+      type: 'payment_collected',
+      message: 'Cash payment collected successfully',
+      data: { bookingId: booking._id.toString() }
+    });
+
+    res.json({
+      success: true,
+      message: 'Cash payment collected successfully',
+      booking: {
+        id: booking._id,
+        serviceTitle: booking.serviceTitle,
+        totalAmount: booking.totalAmount,
+        collectedAmount: booking.paidAmount,
+        paymentVerified: booking.paymentVerified,
+        paymentVerifiedAt: booking.paymentVerifiedAt
+      }
+    });
+
+  } catch (err) {
+    console.error('❌ Cash payment collection error:', err);
+    res.status(500).json({ 
+      message: 'Failed to collect cash payment',
+      error: err.message 
+    });
+  }
+});
+
 export default router;
 

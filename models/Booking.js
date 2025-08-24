@@ -52,6 +52,12 @@ const BookingSchema = new mongoose.Schema({
   paymentVerified: { type: Boolean, default: false },
   paidAmount: { type: Number },
   paymentVerifiedAt: { type: Date },
+  // Payment method
+  paymentMethod: { 
+    type: String, 
+    enum: ['online', 'cash_on_delivery'], 
+    default: 'online' 
+  },
   // Multiple services support
   parentBooking: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking' }, // Reference to parent booking for multiple services
   childBookings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Booking' }], // Child bookings for multiple services

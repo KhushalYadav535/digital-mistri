@@ -3,9 +3,14 @@ import mongoose from 'mongoose';
 const CustomerSchema = new mongoose.Schema({
   name: { 
     type: String, 
-    required: [true, 'Name is required'],
+    required: false,
     trim: true,
-    minlength: [2, 'Name must be at least 2 characters long']
+    validate: {
+      validator: function(v) {
+        return !v || v.length >= 2;
+      },
+      message: 'Name must be at least 2 characters long'
+    }
   },
   email: { 
     type: String, 
@@ -17,9 +22,9 @@ const CustomerSchema = new mongoose.Schema({
   },
   phone: { 
     type: String, 
-    required: [true, 'Phone number is required'],
+    required: false,
     trim: true,
-    match: [/^[0-9]{10}$/, 'Please enter a valid 10-digit phone number']
+    match: [/^$|^[0-9]{10}$/, 'Please enter a valid 10-digit phone number']
   },
   password: { 
     type: String, 
@@ -64,9 +69,9 @@ CustomerSchema.index({ phone: 1 });
 
 // Pre-save middleware to trim strings
 CustomerSchema.pre('save', function(next) {
-  if (this.name) this.name = this.name.trim();
+  if (this.name && this.name.trim()) this.name = this.name.trim();
   if (this.email) this.email = this.email.trim().toLowerCase();
-  if (this.phone) this.phone = this.phone.trim();
+  if (this.phone && this.phone.trim()) this.phone = this.phone.trim();
   if (this.address) {
     if (this.address.street) this.address.street = this.address.street.trim();
     if (this.address.city) this.address.city = this.address.city.trim();

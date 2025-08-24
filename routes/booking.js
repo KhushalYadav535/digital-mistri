@@ -8,7 +8,7 @@ import { sendPushNotification, sendRealTimeNotification } from '../utils/notific
 import nodemailer from 'nodemailer';
 import { sendOtpEmail } from '../utils/emailConfig.js';
 import Job from '../models/Job.js'; // Ensure this is at the top
-import { calculateDistanceFromJanghaiBazar } from '../utils/distanceCalculator.js';
+import { calculateDistanceFromNearestServiceLocation } from '../utils/distanceCalculator.js';
 import { calculateCommissionAndPayment, calculateMultipleServicesCommission } from '../utils/commissionCalculator.js';
 
 const router = express.Router();
@@ -114,31 +114,51 @@ router.post('/', customerAuth, async (req, res) => {
     if (gpsCoordinates && gpsCoordinates.latitude && gpsCoordinates.longitude) {
       console.log('📍 GPS coordinates provided:', gpsCoordinates);
       
-      // Use GPS coordinates for more accurate distance calculation
-      const janghaiBazarCoords = {
-        latitude: 25.541297129300112, // Janghai Bazar, Prayagraj (212401)
-        longitude: 82.31064807968316
-      };
+      // Find nearest service location for GPS coordinates
+      const { getNearestServiceLocation, calculateDistance } = await import('../utils/distanceCalculator.js');
+      const { getNearestServiceLocation: getNearestLocation } = await import('../config/locations.js');
       
-      const { calculateDistance } = await import('../utils/distanceCalculator.js');
-      const distance = calculateDistance(
-        janghaiBazarCoords.latitude,
-        janghaiBazarCoords.longitude,
+      const nearestLocation = getNearestLocation(
         gpsCoordinates.latitude,
         gpsCoordinates.longitude
       );
       
-      distanceInfo = {
-        distance: distance,
-        distanceCharge: Math.round(distance * 10), // ₹10 per km
-        customerCoordinates: {
-          latitude: gpsCoordinates.latitude,
-          longitude: gpsCoordinates.longitude,
-          displayName: gpsCoordinates.address || 'GPS Location',
-          accuracy: gpsCoordinates.accuracy || 0.8
-        },
-        baseLocation: janghaiBazarCoords
-      };
+      if (!nearestLocation) {
+        console.warn('No service location found within range for GPS coordinates');
+        distanceInfo = {
+          distance: 50, // Default 50 km if no service location found
+          distanceCharge: 500, // ₹10 per km
+          customerCoordinates: {
+            latitude: gpsCoordinates.latitude,
+            longitude: gpsCoordinates.longitude,
+            displayName: gpsCoordinates.address || 'GPS Location',
+            accuracy: gpsCoordinates.accuracy || 0.8
+          },
+          baseLocation: null,
+          serviceLocation: null,
+          error: 'No service location found within range'
+        };
+      } else {
+        const distance = calculateDistance(
+          nearestLocation.coordinates.latitude,
+          nearestLocation.coordinates.longitude,
+          gpsCoordinates.latitude,
+          gpsCoordinates.longitude
+        );
+        
+        distanceInfo = {
+          distance: distance,
+          distanceCharge: Math.round(distance * 10), // ₹10 per km
+          customerCoordinates: {
+            latitude: gpsCoordinates.latitude,
+            longitude: gpsCoordinates.longitude,
+            displayName: gpsCoordinates.address || 'GPS Location',
+            accuracy: gpsCoordinates.accuracy || 0.8
+          },
+          baseLocation: nearestLocation.coordinates,
+          serviceLocation: nearestLocation
+        };
+      }
       
       console.log('📍 GPS-based distance calculation:', {
         distance: distance,
@@ -148,7 +168,8 @@ router.post('/', customerAuth, async (req, res) => {
     } else {
       // Fallback to address-based geocoding
       try {
-        distanceInfo = await calculateDistanceFromJanghaiBazar(address);
+        const { calculateDistanceFromNearestServiceLocation } = await import('../utils/distanceCalculator.js');
+        distanceInfo = await calculateDistanceFromNearestServiceLocation(address);
         console.log('Address-based distance calculation result:', distanceInfo);
         
         // Log location accuracy
@@ -438,7 +459,7 @@ router.post('/multiple-services', customerAuth, async (req, res) => {
       };
     } else {
       try {
-        distanceInfo = await calculateDistanceFromJanghaiBazar(address);
+        distanceInfo = await calculateDistanceFromNearestServiceLocation(address);
         console.log('Address-based distance calculation result:', distanceInfo);
       } catch (distanceError) {
         console.warn('Distance calculation failed, using default values:', distanceError.message);
@@ -1535,6 +1556,308 @@ router.post('/test-payment', customerAuth, async (req, res) => {
   } catch (err) {
     console.error('❌ Test payment error:', err);
     res.status(500).json({ message: 'Test payment failed', error: err.message });
+  }
+});
+
+// Cash on Delivery booking endpoint
+router.post('/cash-on-delivery', customerAuth, async (req, res) => {
+  try {
+    console.log('💵 Cash on Delivery booking request received');
+    const { bookingData, isMultipleService, selectedServices } = req.body;
+    
+    if (!bookingData) {
+      return res.status(400).json({ message: 'Booking data is required' });
+    }
+
+    // Import required modules
+    const Booking = (await import('../models/Booking.js')).default;
+    const Worker = (await import('../models/Worker.js')).default;
+    const Notification = (await import('../models/Notification.js')).default;
+    const Job = (await import('../models/Job.js')).default;
+    const { calculateCommissionAndPayment } = await import('../utils/commissionCalculator.js');
+    const { calculateDistanceFromNearestServiceLocation } = await import('../utils/distanceCalculator.js');
+    const { sendRealTimeNotification } = await import('../utils/notifications.js');
+
+    const customerId = req.user.id;
+    let bookingResponse;
+
+    if (isMultipleService && selectedServices && selectedServices.length > 1) {
+      // Handle multiple services booking
+      console.log('Creating multiple services cash on delivery booking...');
+      
+      const { date, time, address, phone, gpsCoordinates } = bookingData;
+      
+      // Calculate distance and charges
+      const distanceInfo = await calculateDistanceFromNearestServiceLocation(address);
+      
+      // Calculate total amount for all services
+      const totalServiceAmount = selectedServices.reduce((sum, service) => {
+        return sum + (service.amount * (service.quantity || 1));
+      }, 0);
+      
+      const totalAmount = totalServiceAmount + distanceInfo.distanceCharge;
+      
+      // Calculate commission for total service amount
+      const { adminCommission, workerPayment } = calculateCommissionAndPayment(totalServiceAmount, distanceInfo.distanceCharge);
+
+      // Create parent booking for multiple services
+      const parentBookingData = {
+        customer: customerId,
+        serviceType: 'Multiple',
+        serviceTitle: `Multiple Services (${selectedServices.length} items)`,
+        bookingDate: new Date(date),
+        bookingTime: time,
+        address,
+        phone,
+        amount: totalServiceAmount,
+        adminCommission,
+        workerPayment,
+        distance: distanceInfo.distance,
+        distanceCharge: distanceInfo.distanceCharge,
+        totalAmount,
+        customerCoordinates: distanceInfo.customerCoordinates,
+        status: 'Pending',
+        paymentMethod: 'cash_on_delivery',
+        paymentVerified: false, // Will be verified when cash is collected
+        paidAmount: 0, // Will be updated when cash is collected
+        isMultipleServiceBooking: true,
+        serviceBreakdown: selectedServices
+      };
+
+      const parentBooking = await Booking.create(parentBookingData);
+      console.log('Parent cash on delivery booking created:', parentBooking._id);
+
+      const childBookings = [];
+      const allWorkersNotified = new Set();
+
+      // Create individual bookings for each service
+      for (const service of selectedServices) {
+        const serviceAmount = service.amount * (service.quantity || 1);
+        const serviceDistanceCharge = distanceInfo.distanceCharge / selectedServices.length;
+        
+        const { adminCommission: serviceAdminCommission, workerPayment: serviceWorkerPayment } = 
+          calculateCommissionAndPayment(serviceAmount, serviceDistanceCharge);
+        const serviceTotalAmount = serviceAmount + serviceDistanceCharge;
+
+        const childBookingData = {
+          customer: customerId,
+          serviceType: service.serviceType,
+          serviceTitle: service.serviceTitle,
+          bookingDate: new Date(date),
+          bookingTime: time,
+          address,
+          phone,
+          amount: serviceAmount,
+          adminCommission: serviceAdminCommission,
+          workerPayment: serviceWorkerPayment,
+          distance: distanceInfo.distance,
+          distanceCharge: serviceDistanceCharge,
+          totalAmount: serviceTotalAmount,
+          customerCoordinates: distanceInfo.customerCoordinates,
+          status: 'Pending',
+          parentBooking: parentBooking._id,
+          isMultipleServiceBooking: false,
+          paymentMethod: 'cash_on_delivery',
+          paymentVerified: false,
+          paidAmount: 0,
+          serviceBreakdown: [service]
+        };
+
+        const childBooking = await Booking.create(childBookingData);
+        childBookings.push(childBooking._id);
+
+        // Find available workers for this service
+        const availableWorkers = await Worker.find({
+          services: service.serviceType,
+          isVerified: true,
+          isAvailable: true
+        });
+
+        // Notify workers
+        for (const worker of availableWorkers) {
+          if (!allWorkersNotified.has(worker._id.toString())) {
+            allWorkersNotified.add(worker._id.toString());
+            
+            await Notification.create({
+              type: 'new_booking_available',
+              user: worker._id,
+              userModel: 'Worker',
+              title: 'New Cash on Delivery Booking Available',
+              message: `A new cash on delivery booking is available for ${service.serviceTitle}`,
+              data: { bookingId: childBooking._id.toString() },
+              read: false
+            });
+
+            sendRealTimeNotification(worker._id, {
+              type: 'new_booking_available',
+              message: `New cash on delivery booking available for service: ${service.serviceTitle}`,
+              bookingId: childBooking._id.toString()
+            });
+          }
+        }
+
+        // Create job entry
+        await Job.create({
+          service: service.serviceType,
+          customer: customerId,
+          candidateWorkers: availableWorkers.map(w => w._id),
+          details: {
+            amount: serviceAmount,
+            totalAmount: serviceTotalAmount,
+            distance: distanceInfo.distance,
+            distanceCharge: serviceDistanceCharge,
+            date,
+            time,
+            address,
+            phone,
+            serviceTitle: service.serviceTitle,
+            paymentMethod: 'cash_on_delivery'
+          },
+          status: 'Pending',
+          booking: childBooking._id
+        });
+      }
+
+      // Update parent booking with child bookings
+      parentBooking.childBookings = childBookings;
+      await parentBooking.save();
+
+      bookingResponse = parentBooking;
+      console.log('Multiple services cash on delivery booking created:', bookingResponse._id);
+
+    } else {
+      // Handle single service booking
+      console.log('Creating single service cash on delivery booking...');
+      
+      const { serviceId, serviceTitle, date, time, address, phone, amount, gpsCoordinates } = bookingData;
+
+      // Calculate distance and charges
+      const distanceInfo = await calculateDistanceFromNearestServiceLocation(address);
+      
+      // Calculate commission and payment
+      const { adminCommission, workerPayment } = calculateCommissionAndPayment(amount, distanceInfo.distanceCharge);
+      const totalAmount = amount + distanceInfo.distanceCharge;
+
+      // Create booking
+      const bookingDataToSave = {
+        customer: customerId,
+        serviceType: serviceId,
+        serviceTitle,
+        bookingDate: new Date(date),
+        bookingTime: time,
+        address,
+        phone,
+        amount,
+        adminCommission,
+        workerPayment,
+        distance: distanceInfo.distance,
+        distanceCharge: distanceInfo.distanceCharge,
+        totalAmount,
+        customerCoordinates: distanceInfo.customerCoordinates,
+        status: 'Pending',
+        paymentMethod: 'cash_on_delivery',
+        paymentVerified: false, // Will be verified when cash is collected
+        paidAmount: 0, // Will be updated when cash is collected
+        serviceBreakdown: [{
+          serviceType: serviceId,
+          serviceTitle,
+          amount,
+          quantity: 1
+        }]
+      };
+
+      const booking = await Booking.create(bookingDataToSave);
+      console.log('Single service cash on delivery booking created:', booking._id);
+
+      // Find available workers
+      const availableWorkers = await Worker.find({
+        services: serviceId,
+        isVerified: true,
+        isAvailable: true
+      });
+
+      // Notify workers
+      for (const worker of availableWorkers) {
+        await Notification.create({
+          type: 'new_booking_available',
+          user: worker._id,
+          userModel: 'Worker',
+          title: 'New Cash on Delivery Booking Available',
+          message: `A new cash on delivery booking is available for ${serviceTitle}`,
+          data: { bookingId: booking._id.toString() },
+          read: false
+        });
+
+        sendRealTimeNotification(worker._id, {
+          type: 'new_booking_available',
+          message: `New cash on delivery booking available for service: ${serviceTitle}`,
+          bookingId: booking._id.toString()
+        });
+      }
+
+      // Create job entry
+      await Job.create({
+        service: serviceId,
+        customer: customerId,
+        candidateWorkers: availableWorkers.map(w => w._id),
+        details: {
+          amount,
+          totalAmount,
+          distance: distanceInfo.distance,
+          distanceCharge: distanceInfo.distanceCharge,
+          date,
+          time,
+          address,
+          phone,
+          serviceTitle,
+          paymentMethod: 'cash_on_delivery'
+        },
+        status: 'Pending',
+        booking: booking._id
+      });
+
+      bookingResponse = booking;
+      console.log('Single service cash on delivery booking created:', bookingResponse._id);
+    }
+
+    // Create notification for customer
+    await Notification.create({
+      type: 'booking_created',
+      user: customerId,
+      userModel: 'Customer',
+      title: 'Cash on Delivery Booking Created',
+      message: `Your cash on delivery booking for ${bookingResponse.serviceTitle} has been created successfully. Pay ₹${bookingResponse.totalAmount} when the worker arrives.`,
+      data: { bookingId: bookingResponse._id.toString() },
+      read: false
+    });
+
+    // Notify admin
+    const Admin = await import('../models/Admin.js').then(mod => mod.default);
+    const admins = await Admin.find();
+    await Promise.all(admins.map(admin => 
+      Notification.create({
+        type: 'new_booking',
+        user: admin._id,
+        userModel: 'Admin',
+        title: 'New Cash on Delivery Booking',
+        message: `New cash on delivery booking created for ${bookingResponse.serviceTitle}`,
+        data: { bookingId: bookingResponse._id.toString() },
+        read: false
+      })
+    ));
+
+    res.json({
+      success: true,
+      booking: bookingResponse,
+      message: 'Cash on delivery booking created successfully'
+    });
+
+  } catch (err) {
+    console.error('❌ Cash on delivery booking error:', err);
+    res.status(500).json({ 
+      message: 'Failed to create cash on delivery booking',
+      error: err.message 
+    });
   }
 });
 

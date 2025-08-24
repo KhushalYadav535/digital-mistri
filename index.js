@@ -37,6 +37,7 @@ import workerRoutes from './routes/worker.js';
 import bookingRoutes from './routes/booking.js';
 import serviceRoutes from './routes/service.js';
 import paymentRoutes from './routes/payment.js';
+import locationRoutes from './routes/locations.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -250,6 +251,7 @@ app.use('/api/worker', workerRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/services', serviceRoutes);
+app.use('/api/locations', locationRoutes);
 // Job routes
 import jobRoutes from './routes/job.js';
 app.use('/api/jobs', jobRoutes);

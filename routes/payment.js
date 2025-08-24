@@ -259,7 +259,7 @@ router.post('/create-booking-after-payment', customerAuth, async (req, res) => {
     const Notification = (await import('../models/Notification.js')).default;
     const Job = (await import('../models/Job.js')).default;
     const { calculateCommissionAndPayment } = await import('../utils/commissionCalculator.js');
-    const { calculateDistanceFromJanghaiBazar } = await import('../utils/distanceCalculator.js');
+    const { calculateDistanceFromNearestServiceLocation } = await import('../utils/distanceCalculator.js');
     const { sendRealTimeNotification } = await import('../utils/notifications.js');
 
     let bookingResponse;
@@ -272,7 +272,7 @@ router.post('/create-booking-after-payment', customerAuth, async (req, res) => {
       const customerId = req.user.id; // Get from auth middleware
 
       // Calculate distance and charges
-      const distanceInfo = await calculateDistanceFromJanghaiBazar(address);
+      const distanceInfo = await calculateDistanceFromNearestServiceLocation(address);
       
       // Calculate commission for all services
       const commissionData = {
@@ -426,7 +426,7 @@ router.post('/create-booking-after-payment', customerAuth, async (req, res) => {
       const customerId = req.user.id;
 
       // Calculate distance and charges
-      const distanceInfo = await calculateDistanceFromJanghaiBazar(address);
+      const distanceInfo = await calculateDistanceFromNearestServiceLocation(address);
       
       // Calculate commission and payment
       const { adminCommission, workerPayment } = calculateCommissionAndPayment(amount, distanceInfo.distanceCharge);

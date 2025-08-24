@@ -14,14 +14,13 @@ router.post('/register', async (req, res) => {
     console.log('Register request body:', req.body); // Debug log
     
     // Validate required fields
-    const { name, email, phone, password, address } = req.body;
+    const { email, password, confirmPassword } = req.body;
     
     // Check for missing fields
     const missingFields = [];
-    if (!name) missingFields.push('name');
     if (!email) missingFields.push('email');
-    if (!phone) missingFields.push('phone');
     if (!password) missingFields.push('password');
+    if (!confirmPassword) missingFields.push('confirmPassword');
     
     if (missingFields.length > 0) {
       return res.status(400).json({ 
@@ -39,20 +38,19 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Validate phone format
-    const phoneRegex = /^[0-9]{10}$/;
-    if (!phoneRegex.test(phone)) {
-      return res.status(400).json({ 
-        message: 'Invalid phone number',
-        errors: ['Phone number must be 10 digits']
-      });
-    }
-
     // Validate password length
     if (password.length < 6) {
       return res.status(400).json({ 
         message: 'Invalid password',
         errors: ['Password must be at least 6 characters long']
+      });
+    }
+
+    // Validate password confirmation
+    if (password !== confirmPassword) {
+      return res.status(400).json({ 
+        message: 'Password mismatch',
+        errors: ['Passwords do not match']
       });
     }
 
@@ -72,13 +70,13 @@ router.post('/register', async (req, res) => {
     const verificationOTP = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // Create new customer (unverified)
+    // Create new customer (unverified) with minimal data
     const customer = new Customer({
-      name: name.trim(),
+      name: email.split('@')[0], // Use email prefix as default name
       email: email.toLowerCase().trim(),
-      phone: phone.trim(),
+      phone: '', // Will be filled later
       password: hashedPassword,
-      address: address || {},
+      address: {},
       isVerified: false,
       emailVerificationOTP: verificationOTP,
       emailVerificationExpires: otpExpires
@@ -89,7 +87,7 @@ router.post('/register', async (req, res) => {
 
     // Send verification email
     try {
-      await sendEmailVerificationOTP(email, verificationOTP, name.trim());
+      await sendEmailVerificationOTP(email, verificationOTP, customer.name);
       console.log(`Email verification OTP sent to: ${email}`);
     } catch (emailError) {
       console.error('Failed to send verification email:', emailError);
